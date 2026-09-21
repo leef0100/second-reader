@@ -103,10 +103,11 @@ cd services/review-ui && npm install && npm run dev # UI on :5173, proxies /api 
 
 Nothing in this repository downloads or contains patient data. To train on public datasets:
 
-1. Read `datasets/registry.yaml` — every dataset's licence and `commercial_ok` flag. Most radiologist-labelled sets are **research-only**. Re-verify the licence text at download time.
-2. Build manifests: `uv run secondreader cxr manifest nih /path/to/nih --out datasets/manifests/nih.csv` (also `chexpert`, `vindr`, `padchest`).
-3. Split (patient-level, hashed; external sets locked): `uv run secondreader cxr split datasets/manifests/*.csv --version v1 --external vindr_cxr,padchest`. Record the printed manifest hash in `DECISIONS.md`.
-4. Train with `configs/experiments/cxr_baseline.yaml` and evaluate on `--tier external`. The report (`runs/<model>/external/report.md`) has overall and per-subgroup metrics with CIs and reliability diagrams; it refuses to render without subgroup tables.
+1. Read `datasets/registry.yaml` — every dataset's licence and `commercial_ok` flag. Most radiologist-labelled sets are **research-only**. Verbatim terms live in `datasets/LICENSES/`; `datasets/ACQUISITION.md` lists what a human must do (PhysioNet credentialing, Stanford/BIMCV click-throughs) and what an agent can fetch unattended. Re-verify the licence text at download time.
+2. Fetch NIH ChestX-ray14 (no credentials, ~45 GB): `nohup scripts/download_nih_cxr14.sh > data/raw/nih_cxr14/download.log 2>&1 &` — resumable, verifies sizes + MD5s, extracts to `data/raw/nih_cxr14/images/`.
+3. Build manifests: `uv run secondreader cxr manifest nih data/raw/nih_cxr14 --out datasets/manifests/nih_cxr14.csv` (also `chexpert`, `vindr`, `padchest`). Manifests are git-ignored.
+4. Split (patient-level, hashed; external sets locked): `uv run secondreader cxr split datasets/manifests/*.csv --version v1 --external vindr_cxr,padchest`. Record the printed manifest hash in `DECISIONS.md`.
+5. Train with `configs/experiments/cxr_baseline.yaml` and evaluate on `--tier external`. The report (`runs/<model>/external/report.md`) has overall and per-subgroup metrics with CIs and reliability diagrams; it refuses to render without subgroup tables.
 
 ## Adding a modality (e.g. ultrasound)
 

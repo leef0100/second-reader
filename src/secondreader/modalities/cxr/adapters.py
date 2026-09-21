@@ -24,25 +24,42 @@ def _finish(rows: pd.DataFrame) -> pd.DataFrame:
     return rows[list(MANIFEST_COLUMNS)].reset_index(drop=True)
 
 
+NIH_ENTRY_CSVS: tuple[str, ...] = ("Data_Entry_2017_v2020.csv", "Data_Entry_2017.csv")
+
+
 def nih_manifest(
-    root: Path, entry_csv: str = "Data_Entry_2017.csv", image_dir: str = "images"
+    root: Path, entry_csv: str | None = None, image_dir: str = "images"
 ) -> pd.DataFrame:
-    """NIH ChestX-ray14: `Finding Labels` pipe-separated; Nodule|Mass → nodule_mass."""
-    df = pd.read_csv(Path(root) / entry_csv)
+    """NIH ChestX-ray14: `Finding Labels` pipe-separated; Nodule|Mass → nodule_mass.
+
+    Accepts both NIH releases of the metadata: the current `Data_Entry_2017_v2020.csv`
+    (column `Patient Sex`, ages cleaned) and the original `Data_Entry_2017.csv`
+    (`Patient Gender`, a few impossible ages such as 412 → unknown). Ages may carry a
+    unit suffix in some mirrors ("058Y"); only the digits are used.
+    """
+    root = Path(root)
+    if entry_csv is None:
+        found = [c for c in NIH_ENTRY_CSVS if (root / c).exists()]
+        if not found:
+            raise FileNotFoundError(f"none of {NIH_ENTRY_CSVS} under {root}")
+        entry_csv = found[0]
+    df = pd.read_csv(root / entry_csv)
     labels = df["Finding Labels"].astype(str)
+    sex_col = "Patient Sex" if "Patient Sex" in df.columns else "Patient Gender"
+    age = pd.to_numeric(df["Patient Age"].astype(str).str.extract(r"(\d+)")[0], errors="coerce")
     out = pd.DataFrame(
         {
             "dataset": "nih_cxr14",
             "image_id": df["Image Index"].astype(str),
             "patient_id": df["Patient ID"].astype(str),
-            "path": [str(Path(root) / image_dir / i) for i in df["Image Index"].astype(str)],
+            "path": [str(root / image_dir / i) for i in df["Image Index"].astype(str)],
             "pneumothorax": labels.str.contains("Pneumothorax").astype(int),
             "pleural_effusion": labels.str.contains("Effusion").astype(int),
             "nodule_mass": (labels.str.contains("Nodule") | labels.str.contains("Mass")).astype(
                 int
             ),
-            "age": pd.to_numeric(df["Patient Age"], errors="coerce").where(lambda a: a < 120),
-            "sex": df["Patient Gender"].astype(str).str.upper().str[0],
+            "age": age.where(age < 120),
+            "sex": df[sex_col].astype(str).str.upper().str[0],
             "view": df["View Position"].astype(str).str.upper(),
             "vendor": np.nan,
         }

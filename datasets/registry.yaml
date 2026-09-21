@@ -13,11 +13,17 @@ datasets:
     labels: [Pneumothorax, Effusion, Nodule, Mass]
     label_method: NLP-mined from reports (noisy); ~984 radiologist boxes on ~880 images
     subgroup_fields: [age, sex, view]
-    license: "NIH Clinical Center release — no use restrictions, attribution requested"
+    license: "NIH Clinical Center release — \"The usage of the data set is unrestricted\" (FAQ Q04); must link the download site, acknowledge NIH Clinical Center, cite Wang et al. CVPR 2017"
     license_url: https://nihcc.app.box.com/v/ChestXray-NIHCC
+    license_file: datasets/LICENSES/nih_cxr14.md
+    license_verified: 2026-09-21
     commercial_ok: true
     role: train
     requires_credentialing: false
+    human_action: none — 12 tar.gz via direct Box links (scripts/download_nih_cxr14.sh); metadata CSVs saved once through the Box web UI
+    size_bytes: 45080462784
+    local_root: data/raw/nih_cxr14
+    metadata_csv: Data_Entry_2017_v2020.csv   # NIH replaced Data_Entry_2017.csv (Patient Gender → Patient Sex, ages fixed)
     derived_from: null
     label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Effusion], nodule_mass: [Nodule, Mass] }
   chexpert:
@@ -29,11 +35,16 @@ datasets:
     labels: [Pneumothorax, Pleural Effusion, Lung Lesion]
     label_method: rule-based NLP labeler with uncertain class; val/test radiologist-labeled
     subgroup_fields: [age, sex, view]
-    license: "Stanford University School of Medicine CheXpert Dataset Research Use Agreement — research only"
-    license_url: https://stanfordmlgroup.github.io/competitions/chexpert/
+    license: "Stanford University Dataset Research Use Agreement — non-commercial research only, no redistribution"
+    license_url: https://stanfordaimi.azurewebsites.net/datasets/8cbd9ed4-2eb9-4565-affc-111cf4f7ebe2
+    license_file: datasets/LICENSES/chexpert.md
+    license_verified: 2026-09-21
     commercial_ok: false
     role: train
     requires_credentialing: false
+    human_action: "click-through — free Stanford AIMI account + accept Research Use Agreement, then AzCopy link (no CITI, no signed DUA)"
+    size_bytes: 505829000000   # CheXpert-v1.0.zip 471.12 GB (original resolution) per AIMI file explorer
+    local_root: data/raw/chexpert
     derived_from: null
     label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Pleural Effusion], nodule_mass: [Lung Lesion] }
     uncertain_label_value: -1
@@ -79,11 +90,16 @@ datasets:
     labels: [pneumothorax, pleural effusion, nodule, mass]
     label_method: 27% physician-labeled manually; remainder RNN-labeled. Use manual subset only.
     subgroup_fields: [age, sex, view, vendor]
-    license: "BIMCV PadChest data use agreement — research / non-commercial (verify at download)"
-    license_url: https://bimcv.cipf.es/bimcv-projects/padchest/
+    license: "PADCHEST Dataset Research Use Agreement — research purposes only; no redistribution; non-academic use needs BIMCV approval"
+    license_url: https://bimcv.cipf.es/bimcv-projects/padchest/padchest-dataset-research-use-agreement/
+    license_file: datasets/LICENSES/padchest.md
+    license_verified: 2026-09-21
     commercial_ok: false
     role: external_test
     requires_credentialing: false
+    human_action: "Google Form request (name, institution, purpose, accept agreement) → BIMCV e-mails a personal download link; ~1.02 TB"
+    size_bytes: 1020000000000
+    local_root: data/raw/padchest
     derived_from: null
     label_map: { pneumothorax: [pneumothorax], pleural_effusion: [pleural effusion], nodule_mass: [nodule, mass] }
     manual_labels_only: true
@@ -140,11 +156,78 @@ datasets:
     derived_from: nih_cxr14   # NOT independent of NIH
   kermany_pediatric:
     display_name: Kermany pediatric chest X-ray
+    site: Guangzhou Women and Children's Medical Center (China)
     n_images: 5856
     format: jpeg
     labels: [normal, pneumonia]
-    license: "CC BY 4.0"
+    license: "CC BY 4.0 (Mendeley Data v3, DOI 10.17632/rscbjbr9sj.3)"
+    license_url: https://data.mendeley.com/datasets/rscbjbr9sj/3
+    license_file: datasets/LICENSES/kermany_pediatric.md
+    license_verified: 2026-09-21
     commercial_ok: true
     role: ood_negative        # wrong population for the gate
     requires_credentialing: false
+    human_action: none — anonymous direct download (ZhangLabData.zip, 8441154111 bytes, includes the OCT set)
+    size_bytes: 8441154111
+    local_root: data/raw/kermany_pediatric
+    derived_from: null
+  openi_iu_cxr:
+    display_name: Open-i Indiana University chest X-ray collection
+    site: Indiana Network for Patient Care, two hospital systems (USA); hosted by NLM Open-i
+    n_images: 7470
+    n_patients: 3955   # one report (study) per patient id
+    format: png (also dicom) + xml reports
+    labels: [free-text report; MeSH/MTI automatic terms]
+    label_method: radiology reports; no per-finding binary labels
+    subgroup_fields: [view]
+    license: "CC BY-NC-ND 4.0 (Open-i FAQ) — NOT re-verifiable on 2026-09-21: openi.nlm.nih.gov serves a US funding-lapse notice and the .tgz URLs return an error page"
+    license_url: https://openi.nlm.nih.gov/faq
+    license_file: datasets/LICENSES/openi_iu_cxr.md
+    license_verified: null    # blocked — site down; re-verify before download
+    commercial_ok: false
+    role: ood_negative        # report-text / shift probe only; NoDerivatives → never a training source
+    requires_credentialing: false
+    human_action: none — anonymous download once NLM restores the site
+    size_bytes: 1100000000
+    local_root: data/raw/openi_iu_cxr
+    derived_from: null
+  nlm_tb_shenzhen:
+    display_name: NLM Shenzhen Hospital TB chest X-ray set
+    site: Shenzhen No.3 People's Hospital (China); curated by NLM/LHNCBC (USA)
+    n_images: 662
+    n_patients: 662
+    format: png
+    labels: [tuberculosis, normal]
+    label_method: clinical readings (radiologist), per-image text file; lung masks for a subset
+    subgroup_fields: [age, sex]
+    license: "NLM README 'Citation and Use' — do not share outside your research group, attribute NLM + Shenzhen No.3 People's Hospital, cite Jaeger 2014 & Candemir 2014; no formal licence"
+    license_url: https://data.lhncbc.nlm.nih.gov/public/Tuberculosis-Chest-X-ray-Datasets/Shenzhen-Hospital-CXR-Set/
+    license_file: datasets/LICENSES/nlm_tb_shenzhen_montgomery.md
+    license_verified: 2026-09-21
+    commercial_ok: false       # no commercial grant stated → treat as research-only
+    role: ood_negative         # site/vendor-shift probe for the gate; no finding labels
+    requires_credentialing: false
+    human_action: none — anonymous per-file HTTPS (no zip; walk index.json)
+    size_bytes: 3768910276
+    local_root: data/raw/nlm_tb/Shenzhen-Hospital-CXR-Set
+    derived_from: null
+  nlm_tb_montgomery:
+    display_name: NLM Montgomery County TB chest X-ray set
+    site: Montgomery County Dept. of Health and Human Services, Maryland (USA); curated by NLM/LHNCBC
+    n_images: 138
+    n_patients: 138
+    format: png
+    labels: [tuberculosis, normal]
+    label_method: clinical readings; manual left/right lung masks for all images
+    subgroup_fields: [age, sex]
+    license: "NLM README 'Citation and Use' — do not share outside your research group, attribute NLM, cite Candemir 2014 & Jaeger 2014; no formal licence"
+    license_url: https://data.lhncbc.nlm.nih.gov/public/Tuberculosis-Chest-X-ray-Datasets/Montgomery-County-CXR-Set/
+    license_file: datasets/LICENSES/nlm_tb_shenzhen_montgomery.md
+    license_verified: 2026-09-21
+    commercial_ok: false
+    role: ood_negative
+    requires_credentialing: false
+    human_action: none — anonymous per-file HTTPS (no zip; walk index.json)
+    size_bytes: 614081206
+    local_root: data/raw/nlm_tb/Montgomery-County-CXR-Set
     derived_from: null

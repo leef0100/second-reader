@@ -131,9 +131,16 @@ def eval_cmd(
     typer.echo(f"report: {out_dir / 'report.md'}  (gated out: {rep.n_gated_out})")
 
 
+_OUT_OPTION = typer.Option(None, "--out", help="default: datasets/manifests/<dataset id>.csv")
+
+
 @app.command("manifest")
 def manifest_cmd(
-    dataset: str, root: Path, out: Path, csv_name: str = "", split: str = "train"
+    dataset: str,
+    root: Path,
+    out: Path | None = _OUT_OPTION,
+    csv_name: str = "",
+    split: str = "train",
 ) -> None:
     """Build a unified manifest from a dataset's native CSVs (nih|chexpert|vindr|padchest)."""
     from secondreader.modalities.cxr import adapters
@@ -151,5 +158,12 @@ def manifest_cmd(
         )
     else:
         raise typer.BadParameter("dataset must be nih|chexpert|vindr|padchest")
+    if out is None:
+        out = Path("datasets/manifests") / f"{df['dataset'].iloc[0]}.csv"
     sha = save_manifest(df, out)
     typer.echo(f"{len(df)} rows → {out} (sha256 {sha[:12]})")
+    from secondreader.modalities.cxr.config import FINDING_CODES
+
+    for code in FINDING_CODES:
+        pos = int((df[code] == 1).sum())
+        typer.echo(f"  {code:18s} positives={pos:7d}  prevalence={pos / max(len(df), 1):.4f}")

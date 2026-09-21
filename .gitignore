@@ -39,3 +39,9 @@ services/review-ui/dist/
 
 # local services
 .local/
+
+# dataset manifests enumerate local image paths — never commit (README only)
+datasets/manifests/*.csv
+
+# agent worktrees / local claude state
+.claude/

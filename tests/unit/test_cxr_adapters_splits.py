@@ -38,6 +38,23 @@ def test_nih_adapter():
     assert set(df["patient_id"]) == {"1", "2", "3"}
 
 
+def test_nih_adapter_v2020_columns_and_autodetect(tmp_path):
+    # NIH replaced Data_Entry_2017.csv with Data_Entry_2017_v2020.csv (`Patient Sex`).
+    df = adapters.nih_manifest(FIX, entry_csv="nih_Data_Entry_2017_v2020.csv")
+    r = df.set_index("image_id")
+    assert r.loc["00000002_000.png", "sex"] == "F" and r.loc["00000003_000.png", "age"] == 41
+    # autodetect prefers the v2020 file when both are present
+    (tmp_path / "Data_Entry_2017_v2020.csv").write_bytes(
+        (FIX / "nih_Data_Entry_2017_v2020.csv").read_bytes()
+    )
+    (tmp_path / "Data_Entry_2017.csv").write_bytes((FIX / "nih_Data_Entry_2017.csv").read_bytes())
+    auto = adapters.nih_manifest(tmp_path).set_index("image_id")
+    assert auto.loc["00000003_000.png", "age"] == 41
+    assert auto.loc["00000001_000.png", "path"].endswith("images/00000001_000.png")
+    with pytest.raises(FileNotFoundError):
+        adapters.nih_manifest(tmp_path / "missing")
+
+
 def test_chexpert_adapter_keeps_uncertain():
     df = adapters.chexpert_manifest(FIX, "chexpert_train.csv").set_index("image_id")
     a = df.loc["CheXpert-v1.0-small/train/patient00002/study2/view1_frontal.jpg"]
