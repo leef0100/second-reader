@@ -1,3 +1,4 @@
+from secondreader.core.plugins.loader import load_plugins, resolve_active_model_id
 from secondreader.core.plugins.protocol import (
     BoundingBox,
     Finding,
@@ -21,4 +22,6 @@ __all__ = [
     "PluginInfo",
     "PluginRegistry",
     "get_plugin_registry",
+    "load_plugins",
+    "resolve_active_model_id",
 ]

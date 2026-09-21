@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     deid_profile: Path = Path("configs/deid/basic_profile.yaml")
     access_token_ttl_minutes: int = 480
     webhook_token: SecretStr | None = None  # shared secret for the Orthanc → platform webhook
+    bootstrap_admin_password: SecretStr | None = None  # creates 'admin' on first start if no users
+    ohif_base_url: str = "/"  # where OHIF is served (gateway root); UI builds viewer links
 
     @field_validator("blob_encryption_key")
     @classmethod

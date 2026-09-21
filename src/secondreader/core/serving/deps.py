@@ -12,6 +12,8 @@ from secondreader.core.db import make_engine, make_session_factory
 from secondreader.core.dicom import Deidentifier, load_profile
 from secondreader.core.ingest import IngestService
 from secondreader.core.pacs import OrthancClient
+from secondreader.core.plugins import PluginRegistry, load_plugins
+from secondreader.core.security import LocalAuthProvider
 from secondreader.core.settings import Settings, get_settings
 from secondreader.core.storage import BlobStore, open_default_store
 
@@ -26,6 +28,21 @@ class Container:
     ingest: IngestService
     orthanc_a: OrthancClient
     orthanc_b: OrthancClient
+    auth: LocalAuthProvider
+    _plugins: PluginRegistry | None = None
+
+    def plugins(self) -> PluginRegistry:
+        """Plugins are loaded lazily (model weights) and cached for the process."""
+        if self._plugins is None:
+            self._plugins = load_plugins(
+                self.settings.model_registry_root,
+                self.settings.active_model_id,
+                self.settings.device,
+            )
+        return self._plugins
+
+    def set_plugins(self, reg: PluginRegistry) -> None:
+        self._plugins = reg
 
 
 def build_container(settings: Settings | None = None) -> Container:
@@ -48,6 +65,7 @@ def build_container(settings: Settings | None = None) -> Container:
         orthanc_b=OrthancClient(
             s.orthanc_b_url, s.orthanc_b_user, s.orthanc_b_password.get_secret_value()
         ),
+        auth=LocalAuthProvider(s.auth_secret.get_secret_value(), s.access_token_ttl_minutes),
     )
 
 

@@ -1,7 +1,13 @@
 // OHIF configuration: single data source = Orthanc B via the gateway (same origin).
 window.config = {
   routerBasename: '/',
+  extensions: [],
+  modes: [],
   showStudyList: true,
+  maxNumberOfWebWorkers: 3,
+  showWarningMessageForCrossOrigin: false,
+  showCPUFallbackMessage: true,
+  strictZSpacingForVolumeViewport: true,
   investigationalUseDialog: { option: 'always' }, // OHIF's own "investigational use" banner
   whiteLabeling: {
     createLogoComponentFn: function (React) {

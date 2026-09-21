@@ -63,7 +63,7 @@ def test_verifier_catches_leaks(deid_profile, result):
 def test_patient_name_and_id_are_pseudonym(result):
     ds = result.dataset
     assert str(ds.PatientID) == result.report.pseudo_key
-    assert str(ds.PatientName) == result.report.pseudo_key
+    assert str(ds.PatientName).rstrip("^") == result.report.pseudo_key
     assert len(result.report.pseudo_key) == 32
     assert "DOE" not in str(ds.PatientName).upper()
 

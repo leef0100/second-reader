@@ -16,6 +16,7 @@ from secondreader import __version__
 from secondreader.core.constants import RESEARCH_USE_LABEL
 from secondreader.core.ingest.service import PhiLeakError
 from secondreader.core.serving.deps import Container, get_container
+from secondreader.core.serving.routes import auth, infer, monitoring, review, studies
 
 log = structlog.get_logger(__name__)
 
@@ -24,6 +25,14 @@ app = FastAPI(
     version=__version__,
     description=f"**{RESEARCH_USE_LABEL}**\n\nAI second reader for medical imaging (prototype).",
 )
+
+
+app.include_router(auth.router)
+app.include_router(studies.router)
+app.include_router(review.router)
+app.include_router(review.artifacts)
+app.include_router(infer.router)
+app.include_router(monitoring.router)
 
 
 @app.middleware("http")
@@ -51,16 +60,19 @@ class Health(BaseModel):
     research_use: str
     orthanc_a: bool
     orthanc_b: bool
+    models: dict[str, str] = {}
 
 
 @app.get("/health", response_model=Health)
 def health(c: Container = Depends(container)) -> Health:
+    plugins = c.plugins().all()
     return Health(
         status="ok",
         version=__version__,
         research_use=RESEARCH_USE_LABEL,
         orthanc_a=c.orthanc_a.reachable(),
         orthanc_b=c.orthanc_b.reachable(),
+        models={p.info.modality_id: p.model_version_id for p in plugins},
     )
 
 

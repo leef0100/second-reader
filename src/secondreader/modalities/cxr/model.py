@@ -130,6 +130,7 @@ def save_bundle(
     metrics: dict[str, Any],
     datasets: list[dict[str, Any]],
     notes: str = "",
+    reference: dict[str, Any] | None = None,
 ) -> str:
     """Write the bundle; returns the content-hashed model_version_id (D-006)."""
     from datetime import UTC, datetime
@@ -173,6 +174,7 @@ def save_bundle(
         "metrics": metrics,
         "created_at": datetime.now(UTC).isoformat(),
         "notes": notes,
+        "reference": reference or {},
         "research_use": "For research use only. Not for diagnostic use.",
     }
     (tmp / "model_card.json").write_text(json.dumps(card, indent=2))

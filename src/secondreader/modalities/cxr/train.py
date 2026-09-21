@@ -202,6 +202,19 @@ def train(
         else:
             log.warning("ood_skipped", n_train_feats=len(f_tr), n_val_feats=len(f_va))
 
+    # ---- drift reference: validation input statistics + calibrated output distributions ----
+    from secondreader.core.monitoring import build_reference
+    from secondreader.modalities.cxr.data import load_image
+    from secondreader.modalities.cxr.preprocess import preprocess_frame
+
+    val_frontal = val_df.reset_index(drop=True)[val["view"] == 0]
+    stats = [
+        preprocess_frame(*load_image(pth), cfg.preprocess).stats for pth in val_frontal["path"]
+    ]
+    probs_val = calibration.apply(val["logits"][val["view"] == 0])
+    gate_out_rate = float((val["view"] != 0).mean()) if len(val["view"]) else 0.0
+    reference = build_reference(stats, probs_val, list(cfg.finding_codes), gate_out_rate)
+
     metrics = {"val": val_summary, "best_val_mean_auroc": best_auc, "history": history}
     out = Path(registry_root) / "pending"
     mid = save_bundle(
@@ -214,6 +227,7 @@ def train(
         metrics=metrics,
         datasets=datasets_info,
         notes=notes,
+        reference=reference,
     )
     (Path(registry_root) / mid / "train_history.json").write_text(json.dumps(history, indent=2))
     log.info("train_done", model_version_id=mid, best_val_mean_auroc=best_auc)

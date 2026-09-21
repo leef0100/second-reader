@@ -140,6 +140,15 @@ class CxrPlugin:
             )
         return findings
 
+    def display_image(self) -> np.ndarray | None:
+        """Source-resolution [0,1] image of the last input, for SC overlays (optional hook)."""
+        c = self._cache
+        if c.pre is None:
+            return None
+        from secondreader.modalities.cxr.preprocess import unletterbox
+
+        return unletterbox(c.pre.image01, c.pre.geometry)
+
     def input_stats(self, inp: ImagingInput) -> dict[str, float]:
         c = self._forward(inp)
         assert c.pre is not None

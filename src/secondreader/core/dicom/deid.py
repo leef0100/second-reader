@@ -184,7 +184,7 @@ class Deidentifier:
                 report.uid_map[original] = new
             el.value = new
         elif template == _PSEUDO_TOKEN:
-            el.value = pseudo
+            el.value = f"{pseudo}^" if el.VR == "PN" else pseudo
         elif template == _DATE_TOKEN:
             el.value = pseudonym.shift_da(original, shift)
         elif template == _DATETIME_TOKEN:
@@ -199,7 +199,9 @@ class Deidentifier:
         from pydicom.datadict import dictionary_VR
 
         vr = dictionary_VR(t)
-        value: Any = pseudo if template == _PSEUDO_TOKEN else template
+        value: Any = template
+        if template == _PSEUDO_TOKEN:
+            value = f"{pseudo}^" if vr == "PN" else pseudo
         ds.add_new(t, vr, value)
 
     def _strip_groups(self, ds: Dataset, report: DeidReport) -> None:

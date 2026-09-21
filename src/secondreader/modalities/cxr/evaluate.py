@@ -55,7 +55,12 @@ def _gate_rows(
         lr, _ = learned_checks(
             cfg, view_probs=out["view_probs"][i], features=out["features"][i], ood=bundle.ood
         )
-        rs += [f"learned: {r.split(':')[0]}" for r in lr]
+        rs += [
+            "learned: out-of-distribution"
+            if "out-of-distribution" in r
+            else "learned: view classifier"
+            for r in lr
+        ]
         if rs:
             keep[i] = False
             reasons.update(rs)

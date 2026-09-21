@@ -123,6 +123,7 @@ def make_dataset(spec: SyntheticSpec | None = None, phi: dict[str, str] | None =
     ds.StudyDescription = spec.study_description
     ds.SeriesDescription = spec.series_description
     ds.PixelSpacing = [0.14, 0.14]
+    ds.PatientOrientation = ["L", "F"]
     ds.KVP = 120
     if spec.burned_in_tag is not None:
         ds.BurnedInAnnotation = spec.burned_in_tag

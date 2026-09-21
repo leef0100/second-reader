@@ -57,3 +57,18 @@ Not forced to 0 or 1. Reported as a sensitivity analysis in the eval report.
 
 **D-018 — Homebrew Orthanc/Postgres for local integration when Docker is absent** · 2026-09-21 · accepted
 Docker Compose is the canonical deployment; on the development Mac (no Docker) the same configs are run via `scripts/local_services.sh`. Integration tests skip when services are unreachable.
+
+**D-019 — OOD threshold is a policy knob, reported as a metric** · 2026-09-21 · accepted
+The Mahalanobis gate threshold is the `gate.ood_percentile` (default 99th) percentile of internal-validation distances. On a shifted source this deliberately rejects more inputs ("unable to assess") rather than guessing; the rejection rate per source is printed in every evaluation report and tracked by the drift monitor. Ledoit-Wolf shrinkage keeps the covariance well-conditioned when n < D.
+
+**D-020 — Model version id includes calibration** · 2026-09-21 · accepted
+`model_version_id = sha256(weights ‖ config ‖ split manifest ‖ calibration)[:16]`. Temperatures and thresholds change what a clinician sees, so re-calibrating the same weights is a new version.
+
+**D-021 — Reveal gating is enforced server-side** · 2026-09-21 · accepted
+Findings, heatmaps, SR and SC are only served after a `ReviewSession.revealed_at` exists for that clinician and study; in `read_first` mode reveal requires a recorded pre-read impression. The UI cannot bypass this because the API refuses (403/409). `immediate` mode exists for bench use and is audited as such.
+
+**D-022 — SR content: TID 1500 with per-finding probability, presence and box** · 2026-09-21 · accepted
+Each finding is a measurement group with finding type (SNOMED CT), a numeric "calibrated probability" measurement (private code 99SRD), a Presence qualitative evaluation (SCT Present/Absent), an algorithm identification carrying the model version, and a POLYLINE image region for the box. Gated-out inputs produce an SR whose only group says "Unable to assess" (ContentLabel = UNABLE TO ASSESS). `VerificationFlag` is always UNVERIFIED — a clinician verifies, never the system. The TID 1600 image library is omitted because it requires Type-2C CR attributes many exports lack.
+
+**D-023 — Secondary Capture overlays carry BurnedInAnnotation=YES** · 2026-09-21 · accepted
+The overlay burns in the finding label, probability and the research-use banner (no PHI — inputs are de-identified). Setting the flag honestly means a downstream de-identifier treats them as pixel-annotated objects.
