@@ -1,0 +1,255 @@
+# De-identification profile — approximates DICOM PS3.15 Annex E
+# "Basic Application Level Confidentiality Profile" with the
+# Clean Descriptors, Retain Longitudinal Temporal Information (Modified Dates)
+# and Retain Patient Characteristics options.
+#
+# Strategy is ALLOWLIST: every attribute not listed under `keep` or `replace`
+# is REMOVED. Private tags, overlays (60xx), and curves (50xx) are always removed.
+# Sequences listed under `keep` are recursed with the same rules.
+name: basic_allowlist
+version: 1
+
+# Attributes retained verbatim. Only what viewing, processing and subgroup
+# analysis need. No free-text descriptors, no identifiers, no device serials.
+keep:
+  # ---- SOP / transfer ----
+  - SOPClassUID            # value is a class, not an identifier (not remapped)
+  - SpecificCharacterSet
+  - ImageType
+  - Modality
+  - ConversionType
+  # ---- patient characteristics (safe-harbor: no DOB, age capped at 89) ----
+  - PatientSex
+  - PatientAge
+  - PatientSize
+  - PatientWeight
+  - PregnancyStatus
+  # ---- study/series structure ----
+  - StudyTime
+  - SeriesTime
+  - ContentTime
+  - AcquisitionTime
+  - SeriesNumber
+  - InstanceNumber
+  - NumberOfFrames
+  - FrameTime
+  - FrameTimeVector
+  - FrameIncrementPointer
+  - Laterality
+  - ImageLaterality
+  - BodyPartExamined
+  - ViewPosition
+  - PatientPosition
+  - PatientOrientation
+  - ImageOrientationPatient
+  - ImagePositionPatient
+  - AnatomicRegionSequence
+  - ViewCodeSequence
+  - CodeValue
+  - CodingSchemeDesignator
+  - CodeMeaning
+  # ---- acquisition/equipment (vendor is a subgroup axis; serials are not kept) ----
+  - Manufacturer
+  - ManufacturerModelName
+  - SoftwareVersions
+  - DetectorType
+  - KVP
+  - ExposureTime
+  - XRayTubeCurrent
+  - Exposure
+  - ExposureInuAs
+  - DistanceSourceToDetector
+  - DistanceSourceToPatient
+  - ImagerPixelSpacing
+  - PixelSpacing
+  - SpatialResolution
+  - Grid
+  - FilterType
+  - CollimatorShape
+  - FocalSpots
+  - PresentationIntentType
+  - ImageAndFluoroscopyAreaDoseProduct
+  - EntranceDoseInmGy
+  - RelativeXRayExposure
+  # ---- pixel description ----
+  - SamplesPerPixel
+  - PhotometricInterpretation
+  - PlanarConfiguration
+  - Rows
+  - Columns
+  - BitsAllocated
+  - BitsStored
+  - HighBit
+  - PixelRepresentation
+  - PixelAspectRatio
+  - PixelData
+  - SmallestImagePixelValue
+  - LargestImagePixelValue
+  - PixelPaddingValue
+  - PixelPaddingRangeLimit
+  - WindowCenter
+  - WindowWidth
+  - WindowCenterWidthExplanation
+  - RescaleIntercept
+  - RescaleSlope
+  - RescaleType
+  - VOILUTSequence
+  - VOILUTFunction
+  - LUTDescriptor
+  - LUTData
+  - LUTExplanation
+  - ModalityLUTSequence
+  - PixelIntensityRelationship
+  - PixelIntensityRelationshipSign
+  - LossyImageCompression
+  - LossyImageCompressionRatio
+  - LossyImageCompressionMethod
+  - BurnedInAnnotation
+  - RecognizableVisualFeatures
+  # ---- ultrasound-ready (kept now so the US plugin needs no profile change) ----
+  - SequenceOfUltrasoundRegions
+  - RegionSpatialFormat
+  - RegionDataType
+  - RegionFlags
+  - RegionLocationMinX0
+  - RegionLocationMinY0
+  - RegionLocationMaxX1
+  - RegionLocationMaxY1
+  - PhysicalUnitsXDirection
+  - PhysicalUnitsYDirection
+  - PhysicalDeltaX
+  - PhysicalDeltaY
+  - TransducerType
+  - TransducerFrequency
+  - CineRate
+  - EffectiveDuration
+  - RecommendedDisplayFrameRate
+  - UltrasoundColorDataPresent
+
+# Attributes rewritten. `<pseudonym>` = HMAC patient key; `<uid>` = deterministic
+# HMAC-remapped UID; `<shifted-date>` = per-patient date shift; literals verbatim.
+replace:
+  PatientName: "<pseudonym>"
+  PatientID: "<pseudonym>"
+  PatientIdentityRemoved: "YES"
+  StudyInstanceUID: "<uid>"
+  SeriesInstanceUID: "<uid>"
+  SOPInstanceUID: "<uid>"
+  FrameOfReferenceUID: "<uid>"
+  StudyDate: "<shifted-date>"
+  SeriesDate: "<shifted-date>"
+  ContentDate: "<shifted-date>"
+  AcquisitionDate: "<shifted-date>"
+  AcquisitionDateTime: "<shifted-datetime>"
+  StudyID: ""            # Type 2: must exist, may be empty
+  AccessionNumber: ""    # Type 2
+  ReferringPhysicianName: ""  # Type 2
+  StudyDescription: "<cleaned>"    # Clean Descriptors: kept only if in the allowed vocabulary
+  SeriesDescription: "<cleaned>"
+
+# Explicitly documented removals (they would be removed anyway by the allowlist;
+# listed so the PHI test suite has a named target list).
+remove:
+  - PatientBirthDate
+  - PatientBirthTime
+  - OtherPatientIDs
+  - OtherPatientIDsSequence
+  - OtherPatientNames
+  - PatientAddress
+  - PatientTelephoneNumbers
+  - PatientMotherBirthName
+  - EthnicGroup
+  - Occupation
+  - PatientComments
+  - InstitutionName
+  - InstitutionAddress
+  - InstitutionalDepartmentName
+  - StationName
+  - DeviceSerialNumber
+  - DeviceUID
+  - OperatorsName
+  - PerformingPhysicianName
+  - NameOfPhysiciansReadingStudy
+  - PhysiciansOfRecord
+  - RequestingPhysician
+  - RequestingService
+  - RequestedProcedureDescription
+  - PerformedProcedureStepDescription
+  - PerformedProcedureStepID
+  - PerformedProcedureStepStartDate
+  - ScheduledProcedureStepID
+  - ImageComments
+  - AdditionalPatientHistory
+  - MedicalRecordLocator
+  - IssuerOfPatientID
+  - MilitaryRank
+  - BranchOfService
+  - CountryOfResidence
+  - RegionOfResidence
+  - PatientReligiousPreference
+  - ResponsiblePerson
+  - ResponsibleOrganization
+  - ProtocolName
+  - ContentSequence
+  - RequestAttributesSequence
+  - ReferencedPatientSequence
+  - ReferencedStudySequence
+  - ReferencedPerformedProcedureStepSequence
+  - InstanceCreatorUID
+  - InstanceCreationDate
+  - InstanceCreationTime
+  - TimezoneOffsetFromUTC
+  - CurrentPatientLocation
+  - PatientState
+  - AdmissionID
+  - AdmittingDiagnosesDescription
+  - VerifyingObserverName
+  - VerifyingOrganization
+  - ContentCreatorName
+
+# Clean Descriptors option: StudyDescription/SeriesDescription are kept only when
+# they match this vocabulary (case-insensitive, after trimming); otherwise emptied.
+description_vocabulary:
+  - CHEST
+  - CHEST PA
+  - CHEST AP
+  - CHEST LATERAL
+  - CHEST PA AND LATERAL
+  - CHEST 1 VIEW
+  - CHEST 2 VIEWS
+  - CHEST PORTABLE
+  - XR CHEST
+  - XR CHEST PA
+  - XR CHEST AP
+  - XR CHEST PA LAT
+  - CXR
+  - PA
+  - AP
+  - LATERAL
+  - PORTABLE
+  - US ABDOMEN
+  - US CHEST
+
+# Patient age is capped per HIPAA safe harbor.
+max_age_years: 89
+
+# Date shift per patient in whole days, deterministic from the pseudonym key,
+# uniformly in [-365, -1]. Ordering between studies of one patient is preserved.
+date_shift_days_range: [1, 365]
+
+# Burned-in text risk handling. Any hit → instance is quarantined, not archived.
+burned_in:
+  quarantine_if_tag_yes: true                 # BurnedInAnnotation == YES
+  quarantine_modalities: [SC, OT, XC, ES, GM, SM, ECG]  # screen captures & photos
+  quarantine_sop_classes:
+    - "1.2.840.10008.5.1.4.1.1.7"         # Secondary Capture Image Storage
+    - "1.2.840.10008.5.1.4.1.1.7.1"
+    - "1.2.840.10008.5.1.4.1.1.7.2"
+    - "1.2.840.10008.5.1.4.1.1.7.3"
+    - "1.2.840.10008.5.1.4.1.1.7.4"
+  pixel_heuristic:
+    enabled: true
+    border_fraction: 0.08      # each border band = 8% of the shorter side
+    bright_quantile: 0.985     # "text-like" pixels are above this image quantile
+    bright_fraction_threshold: 0.02
+    edge_contrast_ratio: 2.5   # band Laplacian variance vs image centre

@@ -1,0 +1,41 @@
+# secrets & env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# data — never commit imaging data
+data/
+datasets/raw/
+datasets/cache/
+datasets/splits/**/*.csv
+!datasets/splits/README.md
+*.dcm
+*.dicom
+*.png
+*.jpg
+*.jpeg
+!docs/**/*.png
+runs/
+artifacts/
+models/
+!src/secondreader/**/models/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# node
+node_modules/
+services/review-ui/dist/
+
+# local services
+.local/

@@ -1,0 +1,127 @@
+# Local deployment. Everything the platform needs, plus a simulated hospital PACS.
+#   docker compose up -d --build
+# Gateway (single origin, avoids CORS):  http://localhost:3000
+#   /            OHIF viewer (reads Orthanc B via DICOMweb)
+#   /review/     clinician review UI
+#   /api/        platform API
+#   /pacs-b/     Orthanc B (de-identified platform archive) REST + DICOMweb
+# Hospital PACS (Orthanc A):              http://localhost:8042   DICOM port 4242
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: secondreader
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secondreader}
+      POSTGRES_DB: secondreader
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secondreader"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  orthanc-a:
+    # Simulated HOSPITAL PACS — identifiable data lives only here.
+    image: orthancteam/orthanc:24.10.1
+    environment:
+      ORTHANC__NAME: "Hospital PACS (simulated, Orthanc A)"
+      ORTHANC__DICOM_AET: ORTHANC_A
+      ORTHANC__DICOM_PORT: "4242"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"orthanc": "${ORTHANC_A_PASSWORD:-orthanc}"}'
+      ORTHANC__PYTHON_SCRIPT: /etc/orthanc/forward_to_platform.py
+      ORTHANC__STABLE_AGE: "5"
+      SR_PLATFORM_URL: http://api:8000
+      SR_WEBHOOK_TOKEN: ${SR_WEBHOOK_TOKEN:-dev-webhook-token}
+      VERBOSE_ENABLED: "false"
+    volumes:
+      - ./docker/orthanc-a/forward_to_platform.py:/etc/orthanc/forward_to_platform.py:ro
+      - orthanc_a_db:/var/lib/orthanc/db
+    ports: ["8042:8042", "4242:4242"]
+
+  orthanc-b:
+    # PLATFORM ARCHIVE — receives only de-identified objects and AI results.
+    image: orthancteam/orthanc:24.10.1
+    environment:
+      ORTHANC__NAME: "Second Reader archive (Orthanc B, de-identified)"
+      ORTHANC__DICOM_AET: ORTHANC_B
+      ORTHANC__DICOM_PORT: "4243"
+      ORTHANC__REMOTE_ACCESS_ALLOWED: "true"
+      ORTHANC__AUTHENTICATION_ENABLED: "true"
+      ORTHANC__REGISTERED_USERS: '{"orthanc": "${ORTHANC_B_PASSWORD:-orthanc}"}'
+      ORTHANC__DICOM_WEB__ENABLE: "true"
+      ORTHANC__DICOM_WEB__ROOT: /dicom-web/
+      ORTHANC__DICOM_WEB__ENABLE_WADO: "true"
+      ORTHANC__STABLE_AGE: "5"
+      VERBOSE_ENABLED: "false"
+    volumes: [orthanc_b_db:/var/lib/orthanc/db]
+    ports: ["8043:8042", "4243:4243"]
+
+  api:
+    build: { context: ., dockerfile: docker/api/Dockerfile }
+    command: uvicorn secondreader.core.serving.app:app --host 0.0.0.0 --port 8000
+    env_file: [.env]
+    environment:
+      SR_DATABASE_URL: postgresql+psycopg://secondreader:${POSTGRES_PASSWORD:-secondreader}@postgres:5432/secondreader
+      SR_ORTHANC_A_URL: http://orthanc-a:8042
+      SR_ORTHANC_B_URL: http://orthanc-b:8042
+      SR_BLOB_ROOT: /data/blobs
+      SR_MODEL_REGISTRY_ROOT: /models
+      SR_WEBHOOK_TOKEN: ${SR_WEBHOOK_TOKEN:-dev-webhook-token}
+    volumes:
+      - blobs:/data/blobs
+      - ./models:/models:ro
+      - ./configs:/app/configs:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8000:8000"]
+
+  worker:
+    build: { context: ., dockerfile: docker/api/Dockerfile }
+    command: secondreader worker run
+    env_file: [.env]
+    environment:
+      SR_DATABASE_URL: postgresql+psycopg://secondreader:${POSTGRES_PASSWORD:-secondreader}@postgres:5432/secondreader
+      SR_ORTHANC_A_URL: http://orthanc-a:8042
+      SR_ORTHANC_B_URL: http://orthanc-b:8042
+      SR_BLOB_ROOT: /data/blobs
+      SR_MODEL_REGISTRY_ROOT: /models
+    volumes:
+      - blobs:/data/blobs
+      - ./models:/models:ro
+      - ./configs:/app/configs:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  migrate:
+    build: { context: ., dockerfile: docker/api/Dockerfile }
+    command: alembic upgrade head
+    env_file: [.env]
+    environment:
+      SR_DATABASE_URL: postgresql+psycopg://secondreader:${POSTGRES_PASSWORD:-secondreader}@postgres:5432/secondreader
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  ohif:
+    image: ohif/app:v3.9.2
+    volumes:
+      - ./docker/ohif/app-config.js:/usr/share/nginx/html/app-config.js:ro
+
+  review-ui:
+    build: { context: ./services/review-ui, dockerfile: Dockerfile }
+
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./docker/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ["3000:80"]
+    depends_on: [ohif, orthanc-b, api, review-ui]
+
+volumes:
+  pgdata:
+  orthanc_a_db:
+  orthanc_b_db:
+  blobs:

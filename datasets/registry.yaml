@@ -1,0 +1,150 @@
+# The only place datasets are declared. `commercial_ok` gates any future commercial
+# retrain. License text MUST be re-verified and dated at download time
+# (`secondreader datasets verify`) — fields below reflect the plan as of 2026-09-21.
+#
+# role: train | external_test | localization_eval | ood_negative | gate_training
+datasets:
+  nih_cxr14:
+    display_name: NIH ChestX-ray14
+    site: NIH Clinical Center (USA)
+    n_images: 112120
+    n_patients: 30805
+    format: png8
+    labels: [Pneumothorax, Effusion, Nodule, Mass]
+    label_method: NLP-mined from reports (noisy); ~984 radiologist boxes on ~880 images
+    subgroup_fields: [age, sex, view]
+    license: "NIH Clinical Center release — no use restrictions, attribution requested"
+    license_url: https://nihcc.app.box.com/v/ChestXray-NIHCC
+    commercial_ok: true
+    role: train
+    requires_credentialing: false
+    derived_from: null
+    label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Effusion], nodule_mass: [Nodule, Mass] }
+  chexpert:
+    display_name: CheXpert
+    site: Stanford (USA)
+    n_images: 224316
+    n_patients: 65240
+    format: jpeg
+    labels: [Pneumothorax, Pleural Effusion, Lung Lesion]
+    label_method: rule-based NLP labeler with uncertain class; val/test radiologist-labeled
+    subgroup_fields: [age, sex, view]
+    license: "Stanford University School of Medicine CheXpert Dataset Research Use Agreement — research only"
+    license_url: https://stanfordmlgroup.github.io/competitions/chexpert/
+    commercial_ok: false
+    role: train
+    requires_credentialing: false
+    derived_from: null
+    label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Pleural Effusion], nodule_mass: [Lung Lesion] }
+    uncertain_label_value: -1
+  mimic_cxr:
+    display_name: MIMIC-CXR
+    site: BIDMC Boston (USA)
+    n_images: 377110
+    n_patients: 65379
+    format: dicom
+    labels: [Pneumothorax, Pleural Effusion, Lung Lesion]
+    label_method: CheXpert labeler + NegBio on free-text reports
+    subgroup_fields: [age, sex, view, longitudinal]
+    license: "PhysioNet Credentialed Health Data License 1.5.0 — research only, no redistribution"
+    license_url: https://physionet.org/content/mimic-cxr/
+    commercial_ok: false
+    role: train
+    requires_credentialing: true
+    derived_from: null
+    label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Pleural Effusion], nodule_mass: [Lung Lesion] }
+    uncertain_label_value: -1
+  vindr_cxr:
+    display_name: VinDr-CXR
+    site: Hospital 108 + Hanoi Medical University Hospital (Vietnam)
+    n_images: 18000
+    n_patients: null
+    format: dicom
+    labels: [Pneumothorax, Pleural effusion, Nodule/Mass]
+    label_method: 3 radiologists per train image, 5-radiologist consensus on test; bounding boxes
+    subgroup_fields: [age, sex, vendor_partial]
+    license: "PhysioNet Credentialed Health Data License 1.5.0 — research only"
+    license_url: https://physionet.org/content/vindr-cxr/
+    commercial_ok: false
+    role: external_test
+    requires_credentialing: true
+    derived_from: null
+    label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Pleural effusion], nodule_mass: [Nodule/Mass] }
+  padchest:
+    display_name: PadChest
+    site: Hospital San Juan de Alicante (Spain)
+    n_images: 160868
+    n_patients: 67000
+    format: png16
+    labels: [pneumothorax, pleural effusion, nodule, mass]
+    label_method: 27% physician-labeled manually; remainder RNN-labeled. Use manual subset only.
+    subgroup_fields: [age, sex, view, vendor]
+    license: "BIMCV PadChest data use agreement — research / non-commercial (verify at download)"
+    license_url: https://bimcv.cipf.es/bimcv-projects/padchest/
+    commercial_ok: false
+    role: external_test
+    requires_credentialing: false
+    derived_from: null
+    label_map: { pneumothorax: [pneumothorax], pleural_effusion: [pleural effusion], nodule_mass: [nodule, mass] }
+    manual_labels_only: true
+  brax:
+    display_name: BRAX
+    site: Hospital Israelita Albert Einstein (Brazil)
+    n_images: 40967
+    n_patients: 19351
+    format: dicom
+    labels: [Pneumothorax, Pleural Effusion, Lung Lesion]
+    label_method: CheXpert-style labeler on Portuguese reports
+    subgroup_fields: [age, sex, view]
+    license: "PhysioNet Credentialed Health Data License 1.5.0 — research only"
+    license_url: https://physionet.org/content/brax/
+    commercial_ok: false
+    role: external_test
+    requires_credentialing: true
+    derived_from: null
+    label_map: { pneumothorax: [Pneumothorax], pleural_effusion: [Pleural Effusion], nodule_mass: [Lung Lesion] }
+  candid_ptx:
+    display_name: CANDID-PTX
+    site: Dunedin Hospital (New Zealand)
+    n_images: 19237
+    format: dicom
+    labels: [pneumothorax masks, chest tubes, rib fractures]
+    label_method: radiologist pixel annotations
+    license: "Custom data use agreement (Figshare) — non-commercial research (verify)"
+    license_url: https://figshare.com/articles/dataset/CANDID-PTX/14173982
+    commercial_ok: false
+    role: localization_eval
+    requires_credentialing: false
+    derived_from: null
+  siim_acr_pneumothorax:
+    display_name: SIIM-ACR Pneumothorax Segmentation
+    n_images: 15252
+    format: dicom
+    labels: [pneumothorax masks]
+    label_method: radiologist pixel annotations
+    license: "Kaggle competition / SIIM terms — non-commercial (verify)"
+    commercial_ok: false
+    role: localization_eval
+    requires_credentialing: false
+    derived_from: nih_cxr14   # NOT independent of NIH — never an external test
+  chestx_det:
+    display_name: ChestX-Det
+    n_images: 3578
+    format: png
+    labels: [13 findings with boxes]
+    label_method: 3 radiologists
+    license: "Research (Deepwise)"
+    commercial_ok: false
+    role: localization_eval
+    requires_credentialing: false
+    derived_from: nih_cxr14   # NOT independent of NIH
+  kermany_pediatric:
+    display_name: Kermany pediatric chest X-ray
+    n_images: 5856
+    format: jpeg
+    labels: [normal, pneumonia]
+    license: "CC BY 4.0"
+    commercial_ok: true
+    role: ood_negative        # wrong population for the gate
+    requires_credentialing: false
+    derived_from: null

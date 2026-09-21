@@ -1,0 +1,52 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      SR_PSEUDONYM_SECRET: ci-only-not-a-secret-0000000000000000000000000000000000000000
+      SR_BLOB_ENCRYPTION_KEY: 00000000000000000000000000000000000000000000000000000000000000ff
+      SR_AUTH_SECRET: ci-only-auth-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with: { enable-cache: true }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: uv sync --extra dev
+      - run: uv run ruff check src tests scripts
+      - run: uv run ruff format --check src tests scripts
+      - run: uv run mypy
+      - run: uv run pytest -q -m "not integration and not slow" --cov=secondreader --cov-report=term-missing
+      - name: Secrets / data leak guard
+        run: |
+          ! git ls-files | grep -E '\.(dcm|dicom)$|^\.env$' || (echo "DICOM or .env tracked in git" && exit 1)
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: secondreader, POSTGRES_PASSWORD: secondreader, POSTGRES_DB: secondreader }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      orthanc-a:
+        image: orthancteam/orthanc:24.10.1
+        ports: ["8042:8042", "4242:4242"]
+        env: { ORTHANC__AUTHENTICATION_ENABLED: "false", ORTHANC__DICOM_AET: "ORTHANC_A" }
+    env:
+      SR_DATABASE_URL: postgresql+psycopg://secondreader:secondreader@localhost:5432/secondreader
+      SR_ORTHANC_A_URL: http://localhost:8042
+      SR_PSEUDONYM_SECRET: ci-only-not-a-secret-0000000000000000000000000000000000000000
+      SR_BLOB_ENCRYPTION_KEY: 00000000000000000000000000000000000000000000000000000000000000ff
+      SR_AUTH_SECRET: ci-only-auth-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: uv sync --extra dev
+      - run: uv run alembic upgrade head
+      - run: uv run pytest -q -m integration
