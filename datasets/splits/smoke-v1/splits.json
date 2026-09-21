@@ -1,0 +1,39 @@
+{
+  "version": "smoke-v1",
+  "salt": "second-reader-v1",
+  "manifest_sha256": "d57f0524df21d4fe23b54012cc350410cb203521e1f9bb4607beec53629e2fad",
+  "tiers": {
+    "train": {
+      "n": 240,
+      "sha256": "215b07bae5280acc75d2dbb869c9683036d7f847b4c430d5d3521ec524ac7af0",
+      "path": "datasets/splits/smoke-v1/train.csv",
+      "datasets": [
+        "synth-a"
+      ]
+    },
+    "val": {
+      "n": 32,
+      "sha256": "b833b658440bff3831ff2a5cfd915b3f73c627ecf914e8cf984098f60d9a7b72",
+      "path": "datasets/splits/smoke-v1/val.csv",
+      "datasets": [
+        "synth-a"
+      ]
+    },
+    "test": {
+      "n": 28,
+      "sha256": "5c7a766960e477947cf08baa3eb8548ee8f5f1d31ce66c96e379db8b6223f06b",
+      "path": "datasets/splits/smoke-v1/test.csv",
+      "datasets": [
+        "synth-a"
+      ]
+    },
+    "external": {
+      "n": 100,
+      "sha256": "c67b95ae5aba2c64b8bea65a099c605e6109e53458c6b626346ad3c73219d000",
+      "path": "datasets/splits/smoke-v1/external.csv",
+      "datasets": [
+        "synth-b"
+      ]
+    }
+  }
+}

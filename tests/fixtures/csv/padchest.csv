@@ -1,0 +1,4 @@
+,ImageID,ImageDir,StudyDate_DICOM,StudyID,PatientID,PatientBirth,PatientSex_DICOM,ViewPosition_DICOM,Projection,MethodProjection,Pediatric,Modality_DICOM,Manufacturer_DICOM,PhotometricInterpretation_DICOM,Labels,MethodLabel
+0,a.png,0,20140101,s1,p1,1950.0,M,POSTEROANTERIOR,PA,Manual review of DICOM fields,No,CR,PhilipsMedicalSystems,MONOCHROME2,"['pleural effusion', 'costophrenic angle blunting']",Physician
+1,b.png,0,20150101,s2,p2,1980.0,F,,L,Manual review of DICOM fields,No,CR,ImagingDynamicsCompanyLtd,MONOCHROME2,"['normal']",Physician
+2,c.png,1,20150101,s3,p3,1960.0,F,ANTEROPOSTERIOR,AP_horizontal,Manual review of DICOM fields,No,DX,PhilipsMedicalSystems,MONOCHROME1,"['nodule', 'pneumothorax']",RNN

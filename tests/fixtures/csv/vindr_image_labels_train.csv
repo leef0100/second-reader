@@ -1,0 +1,7 @@
+image_id,rad_id,Aortic enlargement,Atelectasis,Calcification,Cardiomegaly,Consolidation,ILD,Infiltration,Lung Opacity,Nodule/Mass,Other lesion,Pleural effusion,Pleural thickening,Pneumothorax,Pulmonary fibrosis,No finding
+img1,R8,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0
+img1,R9,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0
+img1,R10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+img2,R8,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0
+img2,R9,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0
+img2,R10,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1

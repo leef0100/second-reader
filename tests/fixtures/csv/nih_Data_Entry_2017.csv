@@ -1,0 +1,5 @@
+Image Index,Finding Labels,Follow-up #,Patient ID,Patient Age,Patient Gender,View Position,OriginalImage[Width,Height],OriginalImagePixelSpacing[x,y]
+00000001_000.png,Cardiomegaly|Effusion,0,1,58,M,PA,2682,2749,0.143,0.143
+00000001_001.png,No Finding,1,1,58,M,PA,2894,2729,0.143,0.143
+00000002_000.png,Nodule|Pneumothorax,0,2,81,F,AP,2500,2048,0.168,0.168
+00000003_000.png,Mass,0,3,412,F,PA,2500,2048,0.168,0.168

@@ -58,8 +58,11 @@ def test_pacs_roundtrip_deidentifies(orthanc_a, api):
         assert "research use only" in body["research_use"].lower()
 
         # Wrong token is rejected.
-        bad = api.post("/v1/ingest/orthanc", json={"orthanc_study_id": study_id},
-                       headers={"X-Webhook-Token": "nope"})
+        bad = api.post(
+            "/v1/ingest/orthanc",
+            json={"orthanc_study_id": study_id},
+            headers={"X-Webhook-Token": "nope"},
+        )
         assert bad.status_code == 401
 
         # Source PACS still holds the identifiable study (we never modify it).

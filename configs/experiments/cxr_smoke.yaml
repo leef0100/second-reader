@@ -1,0 +1,14 @@
+# Fast smoke run on the synthetic dataset (CPU/MPS, minutes). Not a real model.
+name: cxr-smoke
+preprocess: { image_size: 160 }
+gate: { min_short_side: 128, ood_percentile: 99.0 }
+model: { backbone: densenet121, pretrained: true, drop_rate: 0.1 }
+train:
+  epochs: 4
+  batch_size: 16
+  lr: 0.0003
+  early_stop_patience: 2
+  num_workers: 0
+  augment: true
+  operating_point: youden
+  device: auto

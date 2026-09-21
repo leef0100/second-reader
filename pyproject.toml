@@ -33,6 +33,7 @@ dependencies = [
   "scipy>=1.14",
   "matplotlib>=3.9",
   "pandas>=2.2",
+  "pylibjpeg[all]>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,9 @@ dev = [
 
 [project.scripts]
 secondreader = "secondreader.cli.main:app"
+
+[project.entry-points."secondreader.plugins"]
+cxr = "secondreader.modalities.cxr.plugin:CxrPlugin"
 
 [build-system]
 requires = ["hatchling"]

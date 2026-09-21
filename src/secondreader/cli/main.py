@@ -14,6 +14,10 @@ app.add_typer(db_app, name="db")
 app.add_typer(worker_app, name="worker")
 app.add_typer(users_app, name="users")
 
+from secondreader.modalities.cxr.cli import app as cxr_app  # noqa: E402
+
+app.add_typer(cxr_app, name="cxr")
+
 
 @db_app.command("upgrade")
 def db_upgrade() -> None:

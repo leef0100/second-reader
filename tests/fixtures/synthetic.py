@@ -21,6 +21,8 @@ from pydicom.uid import (
     generate_uid,
 )
 
+from secondreader.modalities.cxr.synthetic import lung_image
+
 FAKE_PHI = {
     "PatientName": "DOE^JANE^Q",
     "PatientID": "MRN-0012345",
@@ -69,25 +71,6 @@ class SyntheticSpec:
     seed: int = 0
     study_description: str = "CHEST PA"
     series_description: str = "Some free text with DOE JANE in it"
-
-
-def lung_image(rows: int, cols: int, seed: int = 0, bits: int = 12) -> np.ndarray:
-    """Crude frontal-chest-like image: dark lung ellipses on a brighter body."""
-    rng = np.random.default_rng(seed)
-    y, x = np.mgrid[0:rows, 0:cols]
-    cy, cx = rows / 2, cols / 2
-    body = np.exp(-(((x - cx) / (0.42 * cols)) ** 2 + ((y - cy) / (0.55 * rows)) ** 2))
-    left = np.exp(
-        -(((x - 0.35 * cols) / (0.14 * cols)) ** 2 + ((y - 0.48 * rows) / (0.3 * rows)) ** 2)
-    )
-    right = np.exp(
-        -(((x - 0.65 * cols) / (0.14 * cols)) ** 2 + ((y - 0.48 * rows) / (0.3 * rows)) ** 2)
-    )
-    spine = np.exp(-(((x - cx) / (0.03 * cols)) ** 2)) * body
-    img = 0.15 + 0.7 * body - 0.45 * (left + right) * body + 0.25 * spine
-    img += rng.normal(0, 0.02, size=img.shape)
-    img = np.clip(img, 0, 1)
-    return (img * (2**bits - 1)).astype(np.uint16)
 
 
 def burn_text_band(img: np.ndarray, bits: int = 12) -> np.ndarray:

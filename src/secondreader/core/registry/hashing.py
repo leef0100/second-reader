@@ -26,6 +26,11 @@ def sha256_json(obj: Any) -> str:
     ).hexdigest()
 
 
-def model_version_id(weights_sha256: str, config_sha256: str, split_sha256: str | None) -> str:
-    h = hashlib.sha256(f"{weights_sha256}|{config_sha256}|{split_sha256 or ''}".encode())
+def model_version_id(
+    weights_sha256: str, config_sha256: str, split_sha256: str | None, calibration_sha256: str = ""
+) -> str:
+    """Content-derived id: weights + config + split + calibration (thresholds change outputs)."""
+    h = hashlib.sha256(
+        f"{weights_sha256}|{config_sha256}|{split_sha256 or ''}|{calibration_sha256}".encode()
+    )
     return h.hexdigest()[:16]
