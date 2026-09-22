@@ -1,0 +1,29 @@
+# NIH ChestX-ray14 on the OFFICIAL split (datasets/splits/nih-official-v1, D-029 / R1): train and
+# val are hashed 90/10 from train_val_list.txt patients, `official_test` is NIH's test_list.txt.
+# Same recipe as cxr_nih_baseline.yaml so the only variable is the split; numbers from this run
+# are the ones comparable with Wang 2017 / Guendel 2018 / Baltruschat 2019 (expect ~0.03 lower
+# mean AUROC than nih-v1, up to -0.06 on effusion). Not for tuning: select on val, report on
+# official_test once. Run on the cloud GPU (D-014); evaluate with
+#   secondreader cxr eval <id> --tier official_test --splits datasets/splits/nih-official-v1 \
+#     --cache data/cache/nih-official-v1
+name: cxr-nih-official-v1
+preprocess: { image_size: 320, window_low_pct: 0.5, window_high_pct: 99.5 }
+# ood_normalize (Mahalanobis++) stays off until A/B'd against raw features on rejection curves.
+gate: { min_short_side: 256, ood_percentile: 99.0, ood_normalize: false }
+# cam: hirescam is the default for new bundles (D-029); listed explicitly so the choice is visible.
+model: { backbone: densenet121, pretrained: true, drop_rate: 0.2, cam: hirescam }
+train:
+  epochs: 8
+  batch_size: 16
+  lr: 0.0001
+  weight_decay: 0.0001
+  early_stop_patience: 3
+  num_workers: 4
+  augment: true
+  seed: 0
+  # sens90 + per-view: keep the 90 % sensitivity promise on AP films as well as PA (see
+  # docs/reports/nih_baseline_v1_platt/per_view_thresholds.md for why Youden per view is not it).
+  operating_point: sens90
+  per_view_thresholds: true
+  pos_weight: auto
+  device: auto

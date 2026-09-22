@@ -1,0 +1,52 @@
+{
+  "version": "nih-official-v1",
+  "salt": "second-reader-nih-official-v1",
+  "manifest_sha256": "93c5fd7080e9a5fb8d58f0812ab3ba530507e0c42620463328683047a92339b3",
+  "tiers": {
+    "train": {
+      "n": 77553,
+      "sha256": "fb042ad69ae48de67655c5378a62701c3ebb79de9443a3c69f4984c03af5c0f8",
+      "path": "datasets/splits/nih-official-v1/train.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    },
+    "val": {
+      "n": 8971,
+      "sha256": "4b437cc0a894806c02d081e1c5ec4fb5e37209102fda2711bf71303fa6042757",
+      "path": "datasets/splits/nih-official-v1/val.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    },
+    "test": {
+      "n": 0,
+      "sha256": "7259b68d58f26ed2d936d2cf516d149182dcb32fb34c911c3d000aef8d978902",
+      "path": "datasets/splits/nih-official-v1/test.csv",
+      "datasets": []
+    },
+    "external": {
+      "n": 0,
+      "sha256": "7259b68d58f26ed2d936d2cf516d149182dcb32fb34c911c3d000aef8d978902",
+      "path": "datasets/splits/nih-official-v1/external.csv",
+      "datasets": []
+    },
+    "official_test": {
+      "n": 25596,
+      "sha256": "9aa6783bc92a7687860002cb6fc667205e72c90ed8e1774098a53084235d7c97",
+      "path": "datasets/splits/nih-official-v1/official_test.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    }
+  },
+  "official": {
+    "dataset": "nih_cxr14",
+    "source": "data/raw/nih_cxr14/test_list.txt",
+    "n_test_ids": 25596,
+    "n_test_matched": 25596,
+    "n_dropped_unlisted": 0,
+    "train_pct": 90,
+    "val_pct": 10
+  }
+}

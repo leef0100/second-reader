@@ -6,3 +6,11 @@ external-test hash is recorded in `DECISIONS.md` at lock time.
 
 Columns: `dataset,image_id,patient_id,path,tier,pneumothorax,pleural_effusion,nodule_mass,age,sex,view,vendor`
 Label values: `1`, `0`, `-1` (uncertain → masked), empty (unknown).
+
+Tiers: `train`, `val`, `test`, `external`, and — for splits built with
+`secondreader cxr split --official-nih data/raw/nih_cxr14/test_list.txt` — `official_test`
+(NIH's published `test_list.txt`, 25,596 images; train/val are then hashed 90/10 from the
+`train_val_list.txt` patients only and the random `test` tier is empty). `nih-official-v1`
+is the benchmark tier for literature comparison (D-029); `nih-v1` stays the tier for model
+selection. A model trained on `nih-v1` has seen most `official_test` patients, so only a
+model trained on `nih-official-v1` produces an honest official-split number.
