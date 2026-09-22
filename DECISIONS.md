@@ -92,3 +92,6 @@ Trained on Lambda A100 (7.4 min/epoch, early-stopped at epoch 7, best epoch 4). 
 
 **D-027 — Calibration is Platt scaling (scale + bias), default on** · 2026-09-22 · accepted
 `pos_weight` shifts every logit by roughly log(pos_weight), which temperature scaling cannot undo (NIH baseline v1: ECE 0.18–0.22 on effusion/nodule). `train.calibration: platt` fits p = sigmoid(z/T + b) per finding on the validation tier; `temperature` remains available. `secondreader cxr recalibrate` refits an existing bundle into a new model version (same weights, new calibration/thresholds) — no GPU needed.
+
+**D-028 — 512 px vs 320 px on NIH (models `643fa833d9b2dfe0` vs `cc2f56aa3325788c`)** · 2026-09-22 · accepted
+Same split, same recipe, Platt-calibrated. Internal test AUROC 320→512: pneumothorax 0.883→0.878, effusion 0.886→0.889, nodule/mass 0.796→0.808 (AP 0.739→0.755, PA 0.826→0.837). Cost 2.4× per epoch (108 vs 211 img/s on A100), ECE < 0.02 for both. Verdict: resolution helps nodules modestly and nothing else; the AP-vs-PA gap (≈0.08 AUROC on nodule/mass) and the female pneumothorax gap (≈0.04) are unchanged, so they are not resolution problems. Next levers are data (CheXpert/MIMIC multi-site) and view-aware training, not pixels. 512 px is kept as the nodule-oriented config but 320 px remains the default for iteration speed.
