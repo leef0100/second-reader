@@ -263,8 +263,8 @@ def cache_cmd(
                 if fc.meta.get("limit") == limit:
                     typer.echo(f"{tier}: up to date ({len(fc)} images), skipped (use --force)")
                     continue
-            except StaleCacheError as e:
-                typer.echo(f"{tier}: stale cache, rebuilding ({e})")
+            except (StaleCacheError, OSError, ValueError, KeyError) as e:
+                typer.echo(f"{tier}: stale or incomplete cache, rebuilding ({e})")
         t0 = time.perf_counter()
         meta = build_cache(
             df, manifest_sha256=sha, pre=pre, out_dir=tier_dir, workers=workers, limit=limit
