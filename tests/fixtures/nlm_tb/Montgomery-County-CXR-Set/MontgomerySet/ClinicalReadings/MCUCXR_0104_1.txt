@@ -1,0 +1,4 @@
+Patient's Sex: M
+Patient's Age: 060Y
+
+Bilateral upper-lobe infiltrates and cavity right upper lobe. Likely active TB.
