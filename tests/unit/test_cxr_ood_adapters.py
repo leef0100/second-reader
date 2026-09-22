@@ -16,6 +16,12 @@ FIX = Path(__file__).resolve().parents[1] / "fixtures"
 
 def _kermany_tree(root: Path) -> None:
     files = {
+        # Mendeley v3 naming: <CLASS>-<patient id>-<seq>
+        "train/NORMAL/NORMAL-1049278-0001.jpeg",
+        "train/NORMAL/NORMAL-1049278-0002.jpeg",
+        "train/PNEUMONIA/BACTERIA-1049278-0001.jpeg",  # same patient, later visit
+        "train/PNEUMONIA/VIRUS-1220485-0001.jpeg",
+        # Kaggle-mirror naming, kept as fallbacks
         "train/NORMAL/IM-0115-0001.jpeg",
         "train/NORMAL/IM-0115-0002.jpeg",
         "train/NORMAL/NORMAL2-IM-0315-0001.jpeg",
@@ -35,7 +41,7 @@ def _kermany_tree(root: Path) -> None:
 def test_kermany_adapter(tmp_path):
     _kermany_tree(tmp_path)
     df = adapters.kermany_manifest(tmp_path)
-    assert list(df.columns) == list(MANIFEST_COLUMNS) and len(df) == 8
+    assert list(df.columns) == list(MANIFEST_COLUMNS) and len(df) == 12
     assert (df["dataset"] == "kermany_pediatric").all()
     # paediatric frontal films: still frontal (view_label 0); population flagged via `dataset`
     assert (df["view_label"] == 0).all() and (df["view"] == "AP").all()
@@ -43,6 +49,11 @@ def test_kermany_adapter(tmp_path):
     for c in FINDING_CODES:
         assert df[c].isna().all()
     r = df.set_index("image_id")
+    # v3: the middle number groups sequences and classes of the same patient
+    assert r.loc["train/NORMAL/NORMAL-1049278-0001.jpeg", "patient_id"] == "1049278"
+    assert r.loc["train/NORMAL/NORMAL-1049278-0002.jpeg", "patient_id"] == "1049278"
+    assert r.loc["train/PNEUMONIA/BACTERIA-1049278-0001.jpeg", "patient_id"] == "1049278"
+    assert r.loc["train/PNEUMONIA/VIRUS-1220485-0001.jpeg", "patient_id"] == "1220485"
     assert r.loc["train/PNEUMONIA/person1_bacteria_1.jpeg", "patient_id"] == "person1"
     assert r.loc["train/PNEUMONIA/person1_bacteria_2.jpeg", "patient_id"] == "person1"
     assert r.loc["train/PNEUMONIA/person1000_virus_1681.jpeg", "patient_id"] == "person1000"
@@ -58,7 +69,7 @@ def test_kermany_adapter(tmp_path):
     # survives the manifest CSV round trip used by every other dataset
     sha = save_manifest(df, tmp_path / "m.csv")
     back = load_manifest(tmp_path / "m.csv")
-    assert len(sha) == 64 and len(back) == 8 and back["nodule_mass"].isna().all()
+    assert len(sha) == 64 and len(back) == 12 and back["nodule_mass"].isna().all()
 
 
 def test_nlm_tb_adapter_parses_both_reading_formats():

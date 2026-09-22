@@ -191,16 +191,23 @@ def _safe_list(s: str) -> list[str]:
 # films from other sites/vendors and are expected to pass the gate.
 # ---------------------------------------------------------------------------
 
+_KERMANY_V3 = re.compile(r"^(NORMAL|BACTERIA|VIRUS)-(\d+)-(\d+)$", re.IGNORECASE)
 _KERMANY_PNEUMONIA = re.compile(r"^person(\d+)_(bacteria|virus)_(\d+)$", re.IGNORECASE)
 _KERMANY_NORMAL = re.compile(r"^(NORMAL2-)?IM-(\d+)-(\d+)(?:-\d+)?$", re.IGNORECASE)
 
 
 def _kermany_patient(stem: str) -> str:
-    """Best-effort grouping key; the release has no patient ids.
+    """Best-effort grouping key; the release publishes no patient table.
 
-    Pneumonia files are `person<N>_<bacteria|virus>_<k>` → `person<N>`; normal files are
-    `[NORMAL2-]IM-<study>-<image>` → `[NORMAL2-]IM-<study>`. Anything else is its own key.
+    Mendeley v3 (ZhangLabData.zip) names files `<NORMAL|BACTERIA|VIRUS>-<id>-<seq>`; the
+    middle number recurs across sequences *and* classes (809 of 3,081 ids on the real
+    data), so it is used as the patient key. The Kaggle mirror's `person<N>_<class>_<k>`
+    → `person<N>` and `[NORMAL2-]IM-<study>-<image>` → `[NORMAL2-]IM-<study>` are kept as
+    fallbacks. Anything else is its own key.
     """
+    m = _KERMANY_V3.match(stem)
+    if m:
+        return m.group(2)
     m = _KERMANY_PNEUMONIA.match(stem)
     if m:
         return f"person{m.group(1)}"

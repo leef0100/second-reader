@@ -18,9 +18,16 @@ import typer
 
 from secondreader.core.constants import RESEARCH_USE_LABEL
 
-app = typer.Typer(help=f"Gate-evaluation dataset manifests — {RESEARCH_USE_LABEL}")
+app = typer.Typer(
+    help=f"Gate-evaluation dataset manifests — {RESEARCH_USE_LABEL}", no_args_is_help=True
+)
 
 _OUT = typer.Option(None, "--out", help="default: datasets/manifests/<dataset id>.csv")
+
+
+@app.callback()
+def _group() -> None:
+    """Keeps `manifest` a named sub-command (Typer would otherwise make it the root)."""
 
 
 @app.command("manifest")
