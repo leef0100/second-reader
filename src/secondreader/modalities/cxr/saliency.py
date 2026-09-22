@@ -1,7 +1,17 @@
-"""Grad-CAM saliency per finding, mapped back to source-image coordinates, plus a
-coarse bounding box derived from the heatmap (for the DICOM SR)."""
+"""CAM saliency (Grad-CAM or HiResCAM) per finding, mapped back to source-image
+coordinates, plus a coarse bounding box derived from the heatmap (for the DICOM SR).
+
+Both variants share the hooks; they differ only in how the gradient weights the map:
+  Grad-CAM  — spatially averaged gradient per channel × activation (Selvaraju et al.)
+  HiResCAM  — element-wise gradient × activation, no averaging (Draelos & Carin 2020);
+              for conv → global-average-pool → linear heads this is exactly the class
+              score decomposed over locations, so it cannot highlight unused locations.
+The post-processing (ReLU, max-normalise, 0.5 × max box) is a heuristic either way.
+"""
 
 from __future__ import annotations
+
+from typing import Literal
 
 import numpy as np
 import torch
@@ -12,9 +22,10 @@ from secondreader.core.plugins.protocol import BoundingBox
 from secondreader.modalities.cxr.model import CxrNet
 from secondreader.modalities.cxr.preprocess import Geometry, unletterbox
 
+CamMethod = Literal["gradcam", "hirescam"]
 
-def grad_cam(net: CxrNet, x: torch.Tensor, class_index: int) -> NDArray[np.float32]:
-    """Heatmap (S,S) in [0,1] for one class. `x` is (1,3,S,S) on the model's device."""
+
+def _cam(net: CxrNet, x: torch.Tensor, class_index: int, method: CamMethod) -> NDArray[np.float32]:
     net.eval()
     x = x.detach().requires_grad_(False)
     with torch.enable_grad():
@@ -26,8 +37,11 @@ def grad_cam(net: CxrNet, x: torch.Tensor, class_index: int) -> NDArray[np.float
         score.backward()
         grads = fmap.grad
         assert grads is not None
-        weights = grads.mean(dim=(2, 3), keepdim=True)  # (1,C,1,1)
-        cam = torch.relu((weights * fmap).sum(dim=1, keepdim=True))  # (1,1,h,w)
+        if method == "hirescam":
+            cam = torch.relu((grads * fmap).sum(dim=1, keepdim=True))  # (1,1,h,w)
+        else:
+            weights = grads.mean(dim=(2, 3), keepdim=True)  # (1,C,1,1)
+            cam = torch.relu((weights * fmap).sum(dim=1, keepdim=True))  # (1,1,h,w)
         cam = torch.nn.functional.interpolate(
             cam, size=x.shape[-2:], mode="bilinear", align_corners=False
         )
@@ -36,6 +50,23 @@ def grad_cam(net: CxrNet, x: torch.Tensor, class_index: int) -> NDArray[np.float
     if mx > 0:
         cam_np = cam_np / mx
     return cam_np.astype(np.float32)
+
+
+def grad_cam(net: CxrNet, x: torch.Tensor, class_index: int) -> NDArray[np.float32]:
+    """Grad-CAM heatmap (S,S) in [0,1] for one class. `x` is (1,3,S,S) on the model's device."""
+    return _cam(net, x, class_index, "gradcam")
+
+
+def hires_cam(net: CxrNet, x: torch.Tensor, class_index: int) -> NDArray[np.float32]:
+    """HiResCAM heatmap (S,S) in [0,1]: element-wise gradient × activation, no spatial mean."""
+    return _cam(net, x, class_index, "hirescam")
+
+
+def compute_cam(net: CxrNet, x: torch.Tensor, class_index: int, method: str) -> NDArray[np.float32]:
+    """Dispatch on `model.cam` from the bundle config."""
+    if method not in ("gradcam", "hirescam"):
+        raise ValueError(f"unknown CAM method {method!r} (expected gradcam|hirescam)")
+    return _cam(net, x, class_index, "hirescam" if method == "hirescam" else "gradcam")
 
 
 def to_source_coords(cam_sq: NDArray[np.float32], geom: Geometry) -> NDArray[np.float32]:

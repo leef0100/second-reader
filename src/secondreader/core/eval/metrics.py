@@ -24,11 +24,12 @@ class BinaryMetrics:
     specificity: float | None
     ppv: float | None
     npv: float | None
-    ece: float | None
-    brier: float | None
-    threshold: float
+    ece: float | None  # equal-width bins (Guo et al. 2017 style; literature-comparable)
+    brier: float | None  # proper scoring rule, binning-free — the headline calibration number
+    threshold: float  # nan when rows were scored with per-row (e.g. per-view) thresholds
     low_n: bool
     ci: dict[str, tuple[float, float]] = field(default_factory=dict)
+    ece_equal_mass: float | None = None  # adaptive (equal-mass) bins: robust at low prevalence
 
     def as_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -40,6 +41,7 @@ class BinaryMetrics:
             "ppv": self.ppv,
             "npv": self.npv,
             "ece": self.ece,
+            "ece_equal_mass": self.ece_equal_mass,
             "brier": self.brier,
             "threshold": self.threshold,
             "low_n": self.low_n,
@@ -78,6 +80,29 @@ def expected_calibration_error(
     return float(ece), ReliabilityBins(edges, conf, acc, cnt)
 
 
+def adaptive_calibration_error(p: FloatArr, y: FloatArr, n_bins: int = 15) -> float:
+    """Equal-mass-bin ("adaptive") ECE for a binary output.
+
+    Bins hold (almost) the same number of samples, so the estimate does not collapse
+    into the first bin at low prevalence the way equal-width binning does (Nixon et al.
+    2019; Roelofs et al. 2022). Ties are kept together: bins are cut at score quantiles,
+    so identical scores never straddle two bins.
+    """
+    p = np.asarray(p, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    n = len(p)
+    if n == 0:
+        return 0.0
+    k = max(1, min(n_bins, n))
+    edges = np.unique(np.quantile(p, np.linspace(0.0, 1.0, k + 1)[1:-1]))
+    idx = np.digitize(p, edges, right=True)
+    ece = 0.0
+    for b in np.unique(idx):
+        m = idx == b
+        ece += (m.sum() / n) * abs(float(y[m].mean()) - float(p[m].mean()))
+    return float(ece)
+
+
 def _safe_auroc(p: FloatArr, y: FloatArr) -> float | None:
     if len(np.unique(y)) < 2:
         return None
@@ -85,9 +110,9 @@ def _safe_auroc(p: FloatArr, y: FloatArr) -> float | None:
 
 
 def _rates(
-    p: FloatArr, y: FloatArr, thr: float
+    p: FloatArr, y: FloatArr, thr: float | FloatArr
 ) -> tuple[float | None, float | None, float | None, float | None]:
-    pred = p >= thr
+    pred = p >= thr  # `thr` is one value, or one value per row (per-view thresholds)
     pos, neg = y == 1, y == 0
     tp, fn = int((pred & pos).sum()), int((~pred & pos).sum())
     tn, fp = int((~pred & neg).sum()), int((pred & neg).sum())
@@ -101,20 +126,33 @@ def _rates(
 def binary_metrics(
     p: FloatArr,
     y: FloatArr,
-    threshold: float,
+    threshold: float | FloatArr,
     *,
     n_boot: int = 200,
     seed: int = 0,
     low_n_positives: int = 100,
 ) -> BinaryMetrics:
+    """Discrimination, operating-point and calibration metrics with bootstrap CIs.
+
+    `threshold` is one operating point or one per row (per-view thresholds); the recorded
+    `threshold` is the shared value when all rows agree and NaN otherwise.
+    """
     p = np.asarray(p, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
     n, n_pos = int(len(y)), int((y == 1).sum())
+    thr_arr = np.asarray(threshold, dtype=np.float64)
+    per_row = thr_arr.ndim > 0
+    if per_row and thr_arr.shape != p.shape:
+        raise ValueError(f"per-row thresholds shape {thr_arr.shape} != scores {p.shape}")
+    uniq = np.unique(thr_arr)
+    thr_record = float(uniq[0]) if len(uniq) == 1 else float("nan")
     if n == 0:
-        return BinaryMetrics(0, 0, None, None, None, None, None, None, None, threshold, True)
+        return BinaryMetrics(0, 0, None, None, None, None, None, None, None, thr_record, True)
+    thr: float | FloatArr = thr_arr if per_row else float(thr_arr)
     auroc = _safe_auroc(p, y)
-    sens, spec, ppv, npv = _rates(p, y, threshold)
+    sens, spec, ppv, npv = _rates(p, y, thr)
     ece, _ = expected_calibration_error(p, y)
+    ece_em = adaptive_calibration_error(p, y)
     brier = float(np.mean((p - y) ** 2))
     ci: dict[str, tuple[float, float]] = {}
     if n_boot > 0 and n >= 20:
@@ -124,19 +162,24 @@ def binary_metrics(
             "sensitivity": [],
             "specificity": [],
             "ece": [],
+            "ece_equal_mass": [],
+            "brier": [],
         }
         for _ in range(n_boot):
             i = rng.integers(0, n, n)
             pb, yb = p[i], y[i]
+            tb: float | FloatArr = thr_arr[i] if per_row else float(thr_arr)
             a = _safe_auroc(pb, yb)
             if a is not None:
                 boots["auroc"].append(a)
-            s, sp, _, _ = _rates(pb, yb, threshold)
+            s, sp, _, _ = _rates(pb, yb, tb)
             if s is not None:
                 boots["sensitivity"].append(s)
             if sp is not None:
                 boots["specificity"].append(sp)
             boots["ece"].append(expected_calibration_error(pb, yb)[0])
+            boots["ece_equal_mass"].append(adaptive_calibration_error(pb, yb))
+            boots["brier"].append(float(np.mean((pb - yb) ** 2)))
         for k, v in boots.items():
             if len(v) >= 10:
                 ci[k] = (float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5)))
@@ -150,9 +193,10 @@ def binary_metrics(
         npv,
         ece,
         brier,
-        threshold,
+        thr_record,
         low_n=n_pos < low_n_positives,
         ci=ci,
+        ece_equal_mass=ece_em,
     )
 
 

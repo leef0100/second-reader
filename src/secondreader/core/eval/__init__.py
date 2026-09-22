@@ -1,6 +1,7 @@
 from secondreader.core.eval.metrics import (
     BinaryMetrics,
     ReliabilityBins,
+    adaptive_calibration_error,
     binary_metrics,
     expected_calibration_error,
     fit_platt,
@@ -24,6 +25,7 @@ __all__ = [
     "EvalReport",
     "ReliabilityBins",
     "SubgroupRow",
+    "adaptive_calibration_error",
     "age_band",
     "binary_metrics",
     "expected_calibration_error",

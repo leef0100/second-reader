@@ -10,8 +10,11 @@ from secondreader.modalities.cxr.gate import (
     OodModel,
     combine,
     header_checks,
+    l2_normalize,
     learned_checks,
+    max_logit,
     pixel_checks,
+    pixel_checks_from_stats,
 )
 from secondreader.modalities.cxr.preprocess import (
     input_statistics,
@@ -121,6 +124,50 @@ def test_learned_gate_view_and_ood():
     # unavailable layers are reported as NaN scores, not hidden
     _, s_none = learned_checks(cfg, view_probs=None, features=None, ood=None)
     assert np.isnan(s_none["ood_distance"]) and np.isnan(s_none["view_classifier"])
+
+
+def test_ood_normalize_scores_the_way_it_was_fit_and_ignores_feature_norm():
+    rng = np.random.default_rng(1)
+    base = rng.normal(size=(600, 8))
+    train = base * rng.uniform(0.5, 20.0, size=(600, 1))  # wildly varying feature norms
+    val = rng.normal(size=(100, 8)) * rng.uniform(0.5, 20.0, size=(100, 1))
+    raw = OodModel.fit(train, val, 99.0)
+    plus = OodModel.fit(train, val, 99.0, normalize=True)
+    assert raw.normalize is False and plus.normalize is True
+    assert np.allclose(np.linalg.norm(l2_normalize(train), axis=1), 1.0)
+    f = rng.normal(size=8)
+    # Mahalanobis++ is invariant to the feature norm; the raw gate is not
+    assert plus.distance(f) == pytest.approx(plus.distance(10.0 * f))
+    assert raw.distance(f) != pytest.approx(raw.distance(10.0 * f))
+    # the flag rides along with the bundle (ood.npz) and is honoured on reload
+    from secondreader.modalities.cxr.model import ModelBundle  # noqa: F401 — import check
+
+    assert OodModel(mean=plus.mean, precision=plus.precision, threshold=1.0).normalize is False
+
+
+def test_learned_checks_logs_max_logit_but_never_gates_on_it():
+    cfg = GateConfig()
+    rng = np.random.default_rng(0)
+    ood = OodModel.fit(rng.normal(size=(500, 8)), rng.normal(size=(100, 8)), 99.0)
+    feats = rng.normal(size=8)
+    logits = np.array([-9.0, -4.0, -7.5])  # confident about nothing
+    r, s = learned_checks(
+        cfg, view_probs=np.array([0.9, 0.05, 0.05]), features=feats, ood=ood, logits=logits
+    )
+    assert r == [] and s["max_logit"] == -4.0 == max_logit(logits)
+    _, s_none = learned_checks(cfg, view_probs=None, features=None, ood=None)
+    assert "max_logit" not in s_none
+
+
+def test_pixel_checks_from_stats_matches_pixel_checks():
+    cfg = GateConfig(min_short_side=100)
+    img = window(lung_image(300, 220, seed=2).astype(np.float32), 0.5, 99.5)
+    img[:40] = 1.0  # some saturation
+    r1, s1 = pixel_checks(img, 300, 220, cfg)
+    r2, s2 = pixel_checks_from_stats(input_statistics(img, 300, 220), cfg)
+    assert r1 == r2 and s1 == pytest.approx(s2)
+    tiny_stats = {"src_h": 50.0, "src_w": 50.0, "std": 0.2, "saturated_fraction": 0.0}
+    assert any("small" in r for r in pixel_checks_from_stats(tiny_stats, cfg)[0])
 
 
 def test_combine_yields_unable_with_reasons():

@@ -42,6 +42,10 @@ class GateConfig(BaseModel):
     max_saturated_fraction: float = 0.35
     ood_enabled: bool = True
     ood_percentile: float = 99.0  # validation Mahalanobis percentile → threshold
+    # Mahalanobis++ (Mueller & Hein 2025): L2-normalise penultimate features before fitting the
+    # Gaussian and before scoring. Recorded in ood.npz, so a bundle always scores the way it
+    # was fit regardless of this flag (D-029). Opt-in: unverified on CXR, A/B it.
+    ood_normalize: bool = False
     view_classifier_enabled: bool = True
     view_lateral_threshold: float = 0.5
 
@@ -51,6 +55,11 @@ class ModelConfig(BaseModel):
     pretrained: bool = True  # ImageNet init only (D-007)
     drop_rate: float = 0.2
     in_chans: int = 3
+    # Saliency variant shown to the clinician. HiResCAM (Draelos & Carin 2020) is the
+    # element-wise gradient × activation product — provably the class-score decomposition for
+    # conv → GAP → linear heads. Bundles written before this field existed are pinned to
+    # "gradcam" on load (D-029), so an existing model's heatmaps never change silently.
+    cam: Literal["gradcam", "hirescam"] = "hirescam"
 
 
 class TrainConfig(BaseModel):
@@ -74,6 +83,9 @@ class TrainConfig(BaseModel):
     # null = unweighted (default).
     pos_weight: Literal["auto"] | list[float] | None = None
     prefetch_factor: int = 4  # DataLoader batches prefetched per worker
+    # Choose the operating threshold separately per view (PA / AP) on validation (D-029).
+    # Platt scale/bias stay global; only the threshold moves. Unknown views use the global one.
+    per_view_thresholds: bool = False
 
 
 class CxrConfig(BaseModel):

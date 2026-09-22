@@ -94,7 +94,7 @@ class EvalReport:
 
 
 def _fmt(v: float | None, ci: tuple[float, float] | None = None) -> str:
-    if v is None:
+    if v is None or np.isnan(v):
         return "—"
     s = f"{v:.3f}"
     if ci:
@@ -104,20 +104,22 @@ def _fmt(v: float | None, ci: tuple[float, float] | None = None) -> str:
 
 def _metrics_table(rows: list[tuple[str, dict[str, BinaryMetrics]]], codes: list[str]) -> str:
     out = [
-        "| group | finding | n | n_pos | AUROC [95% CI] | sens [95% CI] | spec [95% CI] | ECE | flag |",  # noqa: E501
-        "|---|---|---:|---:|---|---|---|---|---|",
+        "| group | finding | n | n_pos | AUROC [95% CI] | sens [95% CI] | spec [95% CI] | "
+        "ECE eq-width | ECE eq-mass | Brier | flag |",
+        "|---|---|---:|---:|---|---|---|---|---|---|---|",
     ]
     for name, m in rows:
         for c in codes:
             bm = m.get(c)
             if bm is None:
-                out.append(f"| {name} | {c} | — | — | — | — | — | — | unavailable |")
+                out.append(f"| {name} | {c} | — | — | — | — | — | — | — | — | unavailable |")
                 continue
             flag = "low-n" if bm.low_n else ""
             out.append(
                 f"| {name} | {c} | {bm.n} | {bm.n_pos} | {_fmt(bm.auroc, bm.ci.get('auroc'))} | "
                 f"{_fmt(bm.sensitivity, bm.ci.get('sensitivity'))} | "
-                f"{_fmt(bm.specificity, bm.ci.get('specificity'))} | {_fmt(bm.ece)} | {flag} |"
+                f"{_fmt(bm.specificity, bm.ci.get('specificity'))} | {_fmt(bm.ece)} | "
+                f"{_fmt(bm.ece_equal_mass)} | {_fmt(bm.brier)} | {flag} |"
             )
     return "\n".join(out)
 
@@ -179,7 +181,16 @@ def render_markdown(report: EvalReport, plot_paths: dict[str, Path] | None = Non
         _metrics_table([("all", report.overall)], codes),
         "",
         "Operating thresholds: "
-        + ", ".join(f"{c}={report.overall[c].threshold:.3f}" for c in codes if c in report.overall),
+        + ", ".join(
+            f"{c}={report.overall[c].threshold:.3f}"
+            if not np.isnan(report.overall[c].threshold)
+            else f"{c}=per-view (see notes)"
+            for c in codes
+            if c in report.overall
+        ),
+        "",
+        "ECE eq-width = 15 equal-width bins (literature-comparable; biased at low prevalence). "
+        "ECE eq-mass = 15 equal-mass bins (adaptive). Brier = proper scoring rule, binning-free.",
         "",
     ]
     if plot_paths:
