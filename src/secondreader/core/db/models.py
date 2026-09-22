@@ -125,6 +125,8 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Retry backoff (D-030): a re-queued job is not claimable before this instant.
+    not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ModelVersion(Base):
@@ -162,6 +164,10 @@ class Prediction(Base):
     sc_blob_keys: Mapped[list[Any]] = mapped_column(JSON, default=list)
     latency_ms: Mapped[float | None] = mapped_column(Float)
     request_id: Mapped[str | None] = mapped_column(String(64))
+    # Archive (Orthanc B) push bookkeeping, written by the `push_results` job (D-030):
+    # {"state": queued|retrying|pushed|failed|skipped, "attempts", "job_id", "error",
+    #  "pushed_at", "orthanc_study_id", "n_objects"}. NULL = predates the job.
+    push_status: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )

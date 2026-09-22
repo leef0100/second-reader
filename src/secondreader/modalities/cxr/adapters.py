@@ -6,6 +6,7 @@ fixture CSVs. Verify against the current release when data arrives.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import numpy as np
@@ -179,3 +180,141 @@ def _safe_list(s: str) -> list[str]:
         return [str(x) for x in v] if isinstance(v, list | tuple) else []
     except (ValueError, SyntaxError):
         return []
+
+
+# ---------------------------------------------------------------------------
+# Gate-evaluation sets (datasets/OOD_EVAL_PLAN.md). Neither carries our finding
+# labels, so pneumothorax / pleural_effusion / nodule_mass are blank (= unknown) and
+# these manifests are never a training or finding-evaluation source. `dataset` is the
+# key the gate evaluation groups on: kermany_pediatric is an out-of-population set
+# (1-5-year-olds; frontal, so view_label stays 0), the NLM TB sets are adult frontal
+# films from other sites/vendors and are expected to pass the gate.
+# ---------------------------------------------------------------------------
+
+_KERMANY_V3 = re.compile(r"^(NORMAL|BACTERIA|VIRUS)-(\d+)-(\d+)$", re.IGNORECASE)
+_KERMANY_PNEUMONIA = re.compile(r"^person(\d+)_(bacteria|virus)_(\d+)$", re.IGNORECASE)
+_KERMANY_NORMAL = re.compile(r"^(NORMAL2-)?IM-(\d+)-(\d+)(?:-\d+)?$", re.IGNORECASE)
+
+
+def _kermany_patient(stem: str) -> str:
+    """Best-effort grouping key; the release publishes no patient table.
+
+    Mendeley v3 (ZhangLabData.zip) names files `<NORMAL|BACTERIA|VIRUS>-<id>-<seq>`; the
+    middle number recurs across sequences *and* classes (809 of 3,081 ids on the real
+    data), so it is used as the patient key. The Kaggle mirror's `person<N>_<class>_<k>`
+    → `person<N>` and `[NORMAL2-]IM-<study>-<image>` → `[NORMAL2-]IM-<study>` are kept as
+    fallbacks. Anything else is its own key.
+    """
+    m = _KERMANY_V3.match(stem)
+    if m:
+        return m.group(2)
+    m = _KERMANY_PNEUMONIA.match(stem)
+    if m:
+        return f"person{m.group(1)}"
+    m = _KERMANY_NORMAL.match(stem)
+    if m:
+        return f"{m.group(1) or ''}IM-{m.group(2)}".upper()
+    return stem
+
+
+def kermany_manifest(root: Path, image_dir: str = "chest_xray") -> pd.DataFrame:
+    """Kermany paediatric CXR (Mendeley ZhangLabData v3).
+
+    Layout: `chest_xray/{train,test}/{NORMAL,PNEUMONIA}/*.jpeg`.
+    Population: 1-5-year-olds, AP films (Guangzhou). Role `ood_negative`: the gate should
+    reject these as out-of-population (intended use is adults). `image_id` is the path
+    relative to `image_dir`, so the split and NORMAL/PNEUMONIA class stay recoverable;
+    per-image age/sex are not released (cohort age is recorded in the registry).
+    """
+    base = Path(root) / image_dir
+    if not base.is_dir():
+        raise FileNotFoundError(f"{base} not found (expected chest_xray/ from ZhangLabData.zip)")
+    files = sorted(
+        p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in (".jpeg", ".jpg")
+    )
+    rel = [p.relative_to(base).as_posix() for p in files]
+    out = pd.DataFrame(
+        {
+            "dataset": "kermany_pediatric",
+            "image_id": rel,
+            "patient_id": [_kermany_patient(p.stem) for p in files],
+            "path": [str(p) for p in files],
+            "age": np.nan,
+            "sex": np.nan,
+            "view": "AP",
+            "vendor": np.nan,
+            "view_label": 0,
+        }
+    )
+    return _finish(out)
+
+
+NLM_TB_SETS: dict[str, str] = {
+    # registry id → sub-directory under data/raw/nlm_tb/ holding CXR_png/ + ClinicalReadings/
+    "nlm_tb_shenzhen": "Shenzhen-Hospital-CXR-Set",
+    "nlm_tb_montgomery": "Montgomery-County-CXR-Set/MontgomerySet",
+}
+_NLM_SEX = re.compile(r"\b(male|female|[MF])\b", re.IGNORECASE)
+_NLM_AGE_Y = re.compile(r"(\d+)\s*(?:Y\b|yrs?\b|years?\b)", re.IGNORECASE)
+_NLM_AGE_M = re.compile(r"(\d+)\s*(?:M\b|months?\b|mon\b)", re.IGNORECASE)
+_NLM_AGE_D = re.compile(r"(\d+)\s*(?:D\b|days?\b)", re.IGNORECASE)
+
+
+def _nlm_reading(text: str) -> tuple[str | float, float]:
+    """Parse one ClinicalReadings file → (sex M/F/nan, age in years or nan).
+
+    Shenzhen: `male 45yrs` / `female , 3 yrs` / `male 7month`; Montgomery:
+    `Patient's Sex: F` / `Patient's Age: 043Y`. Sex is taken from the header lines only
+    so finding text never leaks into it.
+    """
+    head = "\n".join(text.strip().splitlines()[:2])
+    sex: str | float = np.nan
+    m = _NLM_SEX.search(head)
+    if m:
+        sex = m.group(1)[0].upper()
+    age = np.nan
+    if (my := _NLM_AGE_Y.search(head)) is not None:
+        age = float(my.group(1))
+    elif (mm := _NLM_AGE_M.search(head)) is not None:
+        age = round(float(mm.group(1)) / 12, 2)
+    elif (md := _NLM_AGE_D.search(head)) is not None:
+        age = round(float(md.group(1)) / 365, 3)
+    if not (0 <= age < 120):
+        age = np.nan
+    return sex, age
+
+
+def nlm_tb_manifest(root: Path, sets: tuple[str, ...] = tuple(NLM_TB_SETS)) -> pd.DataFrame:
+    """NLM Shenzhen + Montgomery TB sets: one PA film per patient, `CXR_png/<id>_{0,1}.png`.
+
+    Rows are enumerated from `ClinicalReadings/*.txt` (the metadata source; images need
+    not be present to build the manifest — `path` is where the PNG lives). The trailing
+    `_0`/`_1` in `image_id` is the TB label (normal / tuberculosis), which is not one of
+    our findings and stays out of the label columns. Adult populations, other sites and
+    vendors than the training data: the gate is expected to accept them.
+    """
+    root = Path(root)
+    frames = []
+    for ds in sets:
+        sub = root / NLM_TB_SETS[ds]
+        readings = sorted((sub / "ClinicalReadings").glob("*.txt"))
+        if not readings:
+            raise FileNotFoundError(f"no ClinicalReadings/*.txt under {sub}")
+        parsed = [_nlm_reading(p.read_text(errors="replace")) for p in readings]
+        stems = [p.stem for p in readings]
+        frames.append(
+            pd.DataFrame(
+                {
+                    "dataset": ds,
+                    "image_id": [f"{s}.png" for s in stems],
+                    "patient_id": stems,  # one image per patient in both sets
+                    "path": [str(sub / "CXR_png" / f"{s}.png") for s in stems],
+                    "age": [a for _, a in parsed],
+                    "sex": [s for s, _ in parsed],
+                    "view": "PA",
+                    "vendor": np.nan,
+                    "view_label": 0,
+                }
+            )
+        )
+    return _finish(pd.concat(frames, ignore_index=True))

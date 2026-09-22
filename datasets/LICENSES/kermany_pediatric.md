@@ -4,7 +4,7 @@
 |---|---|
 | Registry id | `kermany_pediatric` |
 | Official source | Mendeley Data, "Large Dataset of Labeled Optical Coherence Tomography (OCT) and Chest X-Ray Images", v3 (2018-06-01), DOI 10.17632/rscbjbr9sj.3: <https://data.mendeley.com/datasets/rscbjbr9sj/3> |
-| Verified on | **2026-09-21** (Mendeley public API `data_licence` field + dataset page) |
+| Verified on | **2026-09-21** (Mendeley public API `data_licence` field + dataset page); **re-verified 2026-09-22** on download day via `https://data.mendeley.com/public-api/datasets/rscbjbr9sj?version=3` — `short_name: CC BY 4.0`, description text identical to the quote below, version 3 published 2018-06-01 |
 | Licence | **CC BY 4.0** — Creative Commons Attribution 4.0 International, <http://creativecommons.org/licenses/by/4.0> |
 | `commercial_ok` | true (attribution required) |
 | Credentialing | **none** — anonymous direct download, no account, no click-through |

@@ -10,8 +10,8 @@ ever committed. All data is **for research use only**.
 | Dataset | Role | Size | Credentialing | Agent can fetch unattended? | Status |
 |---|---|---|---|---|---|
 | NIH ChestX-ray14 | train | 45.1 GB | none | **yes** — `scripts/download_nih_cxr14.sh` | **downloading** (see below) |
-| Kermany paediatric | ood_negative | 8.4 GB (incl. OCT) | none (CC BY 4.0) | **yes** — single Mendeley URL | verified, not downloaded |
-| NLM TB Shenzhen + Montgomery | ood_negative | 3.8 GB + 0.6 GB | none | **yes** — per-file HTTPS walk | verified, not downloaded |
+| Kermany paediatric | ood_negative (gate should reject) | 8.4 GB (incl. OCT) | none (CC BY 4.0) | **yes** — `scripts/download_ood_sets.sh` | **downloading 2026-09-22** (zip verified; `chest_xray/` extracted, OCT skipped) |
+| NLM TB Shenzhen + Montgomery | gate_eval (gate should accept) | 3.8 GB + 0.6 GB | none | **yes** — `scripts/download_ood_sets.sh` | **downloading 2026-09-22** |
 | Open-i IU CXR | ood / report text | ~1–2 GB | none, but CC BY-NC-ND | yes once NLM's site is back up | **site down** (US federal funding-lapse notice); see `LICENSES/openi_iu_cxr.md` |
 | CheXpert | train | 471 GB | Stanford AIMI account + click-through RUA | **no** — human registers, then agent runs AzCopy | waiting on human |
 | PadChest | external_test | ~1.02 TB | BIMCV Google Form + RUA | **no** — human submits form, receives private link | waiting on human |
@@ -46,8 +46,13 @@ Open <https://figshare.com/articles/dataset/CANDID-PTX/14173982>, request access
 
 ### 5. Nothing needed (agent-only)
 * **NIH ChestX-ray14** — running now: `scripts/download_nih_cxr14.sh` (resumable; log `data/raw/nih_cxr14/download.log`; PID in `download.pid`). Metadata CSVs were saved once through the Box UI because Box refuses direct links for them; their SHA-256s are pinned in the script.
-* **Kermany paediatric** — `LICENSES/kermany_pediatric.md` has the curl line.
-* **NLM TB sets** — `LICENSES/nlm_tb_shenzhen_montgomery.md` has the index.json walk.
+* **Kermany paediatric + NLM TB sets** — `scripts/download_ood_sets.sh` (resumable; size-checked
+  against the pinned zip size / each folder's `index.json`; log `data/raw/ood_download.log`, PID in
+  `data/raw/ood_download.pid`). Started 2026-09-22. It re-reads the Mendeley licence field on the
+  day of download and fetches the NLM README files (the licence terms) next to the data. Then build
+  the manifests with `uv run python -m secondreader.modalities.cxr.cli_datasets manifest kermany
+  data/raw/kermany_pediatric` and `… manifest nlm-tb data/raw/nlm_tb`; how they are used is in
+  `datasets/OOD_EVAL_PLAN.md`.
 * **Open-i IU CXR** — retry when <https://openi.nlm.nih.gov> stops serving the funding-lapse notice; then re-verify the FAQ licence text before use (CC BY-NC-ND 4.0 as last published → `commercial_ok: false`, `ood`/report-text role only).
 
 ## Rules that apply to every download

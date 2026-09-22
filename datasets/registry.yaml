@@ -2,7 +2,12 @@
 # retrain. License text MUST be re-verified and dated at download time
 # (`secondreader datasets verify`) — fields below reflect the plan as of 2026-09-21.
 #
-# role: train | external_test | localization_eval | ood_negative | gate_training
+# role: train | external_test | localization_eval | ood_negative | gate_eval | gate_training
+#   ood_negative = the gate is expected to REJECT it (out of population / out of scope)
+#   gate_eval    = the gate is expected to ACCEPT it (in population, other site/vendor)
+#   Both are evaluation-only: finding labels blank, never a train/val source
+#   (datasets/OOD_EVAL_PLAN.md). `gate_expected` makes the expectation explicit;
+#   `acquisition_status` is updated by whoever runs the download script.
 datasets:
   nih_cxr14:
     display_name: NIH ChestX-ray14
@@ -163,13 +168,18 @@ datasets:
     license: "CC BY 4.0 (Mendeley Data v3, DOI 10.17632/rscbjbr9sj.3)"
     license_url: https://data.mendeley.com/datasets/rscbjbr9sj/3
     license_file: datasets/LICENSES/kermany_pediatric.md
-    license_verified: 2026-09-21
+    license_verified: 2026-09-22   # Mendeley public API data_licence re-read on download day: CC BY 4.0, text unchanged
     commercial_ok: true
     role: ood_negative        # wrong population for the gate
+    gate_expected: reject     # paediatric (1-5 y) → out of intended-use population; frontal, so view_label stays 0
+    population: paediatric
+    subgroup_fields: [view]   # no per-image age/sex released; cohort age 1-5 y
     requires_credentialing: false
     human_action: none — anonymous direct download (ZhangLabData.zip, 8441154111 bytes, includes the OCT set)
     size_bytes: 8441154111
     local_root: data/raw/kermany_pediatric
+    acquisition_status: downloading   # scripts/download_ood_sets.sh, 2026-09-22; zip verified, chest_xray/ extracted, OCT skipped
+    adapter: secondreader.modalities.cxr.adapters.kermany_manifest
     derived_from: null
   openi_iu_cxr:
     display_name: Open-i Indiana University chest X-ray collection
@@ -203,13 +213,17 @@ datasets:
     license: "NLM README 'Citation and Use' — do not share outside your research group, attribute NLM + Shenzhen No.3 People's Hospital, cite Jaeger 2014 & Candemir 2014; no formal licence"
     license_url: https://data.lhncbc.nlm.nih.gov/public/Tuberculosis-Chest-X-ray-Datasets/Shenzhen-Hospital-CXR-Set/
     license_file: datasets/LICENSES/nlm_tb_shenzhen_montgomery.md
-    license_verified: 2026-09-21
+    license_verified: 2026-09-22   # README re-downloaded by scripts/download_ood_sets.sh (compare with LICENSES/ text)
     commercial_ok: false       # no commercial grant stated → treat as research-only
-    role: ood_negative         # site/vendor-shift probe for the gate; no finding labels
+    role: gate_eval            # adult PA films from another site/vendor: the gate should ACCEPT them
+    gate_expected: accept
+    population: adult
     requires_credentialing: false
     human_action: none — anonymous per-file HTTPS (no zip; walk index.json)
     size_bytes: 3768910276
     local_root: data/raw/nlm_tb/Shenzhen-Hospital-CXR-Set
+    acquisition_status: downloading   # scripts/download_ood_sets.sh, 2026-09-22
+    adapter: secondreader.modalities.cxr.adapters.nlm_tb_manifest
     derived_from: null
   nlm_tb_montgomery:
     display_name: NLM Montgomery County TB chest X-ray set
@@ -223,11 +237,15 @@ datasets:
     license: "NLM README 'Citation and Use' — do not share outside your research group, attribute NLM, cite Candemir 2014 & Jaeger 2014; no formal licence"
     license_url: https://data.lhncbc.nlm.nih.gov/public/Tuberculosis-Chest-X-ray-Datasets/Montgomery-County-CXR-Set/
     license_file: datasets/LICENSES/nlm_tb_shenzhen_montgomery.md
-    license_verified: 2026-09-21
+    license_verified: 2026-09-22   # README re-downloaded by scripts/download_ood_sets.sh (compare with LICENSES/ text)
     commercial_ok: false
-    role: ood_negative
+    role: gate_eval            # adult PA films, different detector (4020×4892): the gate should ACCEPT them
+    gate_expected: accept
+    population: adult
     requires_credentialing: false
     human_action: none — anonymous per-file HTTPS (no zip; walk index.json)
     size_bytes: 614081206
-    local_root: data/raw/nlm_tb/Montgomery-County-CXR-Set
+    local_root: data/raw/nlm_tb/Montgomery-County-CXR-Set/MontgomerySet
+    acquisition_status: downloading   # scripts/download_ood_sets.sh, 2026-09-22
+    adapter: secondreader.modalities.cxr.adapters.nlm_tb_manifest
     derived_from: null
