@@ -125,3 +125,15 @@ Implement `secondreader.core.plugins.ModalityPlugin` in `src/secondreader/modali
 ## Security notes for anyone deploying this beyond a laptop
 
 Terminate TLS at the gateway; put Orthanc B and the API behind it; replace basic-auth injection in `docker/gateway/nginx.conf` with real identity propagation; keep `SR_*` secrets in a secrets manager; enable disk encryption in addition to the app-level blob encryption; review `docs/REGULATORY_NOTES.md` — this is not a product.
+
+## Public site
+
+`services/site/` is a static, informational site for the project (plain HTML/CSS/JS, no build step, no upload, no demo, no login). Every section carries "For research use only. Not for diagnostic use." and the results shown are internal-test figures only. Preview locally with `python3 -m http.server 8090 -d services/site` and open http://localhost:8090/.
+
+`.github/workflows/pages.yml` deploys it to GitHub Pages on every push to `main` that touches `services/site/`. Pages is **not** enabled by default; a repo admin must do this once:
+
+1. GitHub → repo **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions** (not "Deploy from a branch").
+3. Push to `main` (or run the `pages` workflow manually from the Actions tab). The site URL appears in the workflow's `deploy` job and under Settings → Pages.
+
+Before the first deploy, replace the placeholder `mailto:` address in `services/site/index.html` (section "Contact") with a real one, and re-read the site against `docs/INTENDED_USE.md` and `docs/REGULATORY_NOTES.md`.
