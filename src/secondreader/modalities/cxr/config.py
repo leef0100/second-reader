@@ -63,6 +63,9 @@ class TrainConfig(BaseModel):
     augment: bool = True
     seed: int = 0
     operating_point: Literal["youden", "sens90"] = "youden"
+    # "platt" fits scale + bias (needed whenever pos_weight shifts the logits, D-027);
+    # "temperature" fits scale only.
+    calibration: Literal["platt", "temperature"] = "platt"
     max_train_samples: int | None = None  # for smoke runs
     max_steps_per_epoch: int | None = None  # for smoke runs: cap optimizer steps per epoch
     device: str = "auto"

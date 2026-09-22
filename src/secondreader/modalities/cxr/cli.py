@@ -175,6 +175,36 @@ def eval_cmd(
 _OUT_OPTION = typer.Option(None, "--out", help="default: datasets/manifests/<dataset id>.csv")
 
 
+@app.command("recalibrate")
+def recalibrate_cmd(
+    model_id: str,
+    splits: Path = Path("datasets/splits/v1"),
+    registry: Path = Path("models"),
+    cache: Path | None = typer.Option(None, help="cache root holding val/ (from `cxr cache`)"),
+    method: str = typer.Option("platt", help="platt (scale+bias) | temperature"),
+    operating_point: str | None = None,
+    device: str = "auto",
+) -> None:
+    """Refit calibration + thresholds on the validation tier → new model version (same weights)."""
+    import json
+
+    from secondreader.modalities.cxr.splits import load_tier
+    from secondreader.modalities.cxr.train import recalibrate
+
+    val = load_tier(splits, "val")
+    mid, summary = recalibrate(
+        registry / model_id,
+        val,
+        registry_root=registry,
+        method=method,
+        operating_point=operating_point,
+        cache_dir=(cache / "val") if cache else None,
+        device=device,
+    )
+    typer.echo(f"model_version_id: {mid}  (from {model_id}, {method})")
+    typer.echo(json.dumps(summary, indent=2))
+
+
 @app.command("manifest")
 def manifest_cmd(
     dataset: str,

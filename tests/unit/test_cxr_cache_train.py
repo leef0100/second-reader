@@ -29,7 +29,14 @@ PRE = PreprocessConfig(image_size=32)
 # The cache stores the letterboxed [0,1] frame as uint8: the only permitted difference from the
 # decode path is 8-bit quantization (≤ 0.5/255 in [0,1], divided by the smallest ImageNet std).
 QUANT_TOL = 0.5 / 255 / 0.225 * 1.01  # +1% for float32 rounding of the normalization
-CALIBRATION_KEYS = {"temperatures", "thresholds", "operating_point", "finding_codes"}
+CALIBRATION_KEYS = {
+    "temperatures",
+    "biases",
+    "thresholds",
+    "operating_point",
+    "finding_codes",
+    "method",
+}
 
 
 @pytest.fixture(scope="module")
@@ -145,7 +152,7 @@ def test_cache_cli_builds_skips_rebuilds_and_reads_config(splits, tmp_path):
     assert res.exit_code == 0 and "up to date" in res.output and "skipped" in res.output
 
     res = r.invoke(app, [*base, "--tiers", "train", "--window-low", "1.0"])  # stale → rebuilt
-    assert res.exit_code == 0 and "stale cache, rebuilding" in res.output
+    assert res.exit_code == 0 and "stale or incomplete cache, rebuilding" in res.output
     meta = json.loads((out / "train" / "cache.json").read_text())
     assert meta["preprocess"]["window_low_pct"] == 1.0
 

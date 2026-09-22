@@ -12,7 +12,7 @@ Bundle layout (`<registry>/<model_version_id>/`):
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -72,14 +72,45 @@ def pick_device(pref: str = "auto") -> torch.device:
 
 @dataclass
 class Calibration:
+    """p = sigmoid(z / T + b) per finding. `biases` all zero == plain temperature scaling."""
+
     temperatures: list[float]
     thresholds: list[float]
     operating_point: str
     finding_codes: list[str]
+    biases: list[float] = field(default_factory=list)
+    method: str = "temperature"
+
+    def __post_init__(self) -> None:
+        if not self.biases:
+            self.biases = [0.0] * len(self.temperatures)
 
     def apply(self, logits: NDArray[np.float64]) -> NDArray[np.float64]:
-        z = np.asarray(logits, dtype=np.float64) / np.asarray(self.temperatures)
+        z = np.asarray(logits, dtype=np.float64) / np.asarray(self.temperatures) + np.asarray(
+            self.biases
+        )
         return np.asarray(1.0 / (1.0 + np.exp(-z)))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "temperatures": self.temperatures,
+            "biases": self.biases,
+            "thresholds": self.thresholds,
+            "operating_point": self.operating_point,
+            "finding_codes": self.finding_codes,
+            "method": self.method,
+        }
+
+    @classmethod
+    def from_dict(cls, cal: dict[str, Any]) -> Calibration:
+        return cls(
+            temperatures=list(cal["temperatures"]),
+            thresholds=list(cal["thresholds"]),
+            operating_point=str(cal["operating_point"]),
+            finding_codes=list(cal["finding_codes"]),
+            biases=list(cal.get("biases") or []),
+            method=str(cal.get("method", "temperature")),
+        )
 
 
 @dataclass
@@ -102,13 +133,7 @@ class ModelBundle:
         net.load_state_dict(state)
         dev = pick_device(device)
         net.to(dev).eval()
-        cal = json.loads((path / "calibration.json").read_text())
-        calibration = Calibration(
-            temperatures=list(cal["temperatures"]),
-            thresholds=list(cal["thresholds"]),
-            operating_point=str(cal["operating_point"]),
-            finding_codes=list(cal["finding_codes"]),
-        )
+        calibration = Calibration.from_dict(json.loads((path / "calibration.json").read_text()))
         ood: OodModel | None = None
         if (path / "ood.npz").exists():
             z = np.load(path / "ood.npz")
@@ -142,17 +167,7 @@ def save_bundle(
     (tmp / "config.yaml").write_text(
         yaml.safe_dump(cfg.model_dump(exclude={"content_hash"}), sort_keys=True)
     )
-    (tmp / "calibration.json").write_text(
-        json.dumps(
-            {
-                "temperatures": calibration.temperatures,
-                "thresholds": calibration.thresholds,
-                "operating_point": calibration.operating_point,
-                "finding_codes": calibration.finding_codes,
-            },
-            indent=2,
-        )
-    )
+    (tmp / "calibration.json").write_text(json.dumps(calibration.as_dict(), indent=2))
     if ood is not None:
         np.savez(tmp / "ood.npz", mean=ood.mean, precision=ood.precision, threshold=ood.threshold)
     w_sha = sha256_file(tmp / "weights.pt")

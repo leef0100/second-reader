@@ -25,6 +25,7 @@ from torch.utils.data import DataLoader, Sampler
 
 from secondreader.core.eval import (
     binary_metrics,
+    fit_platt,
     fit_temperature,
     sensitivity_target_threshold,
     youden_threshold,
@@ -102,6 +103,48 @@ def run_inference(
         "y": np.concatenate(ys),
         "view": np.concatenate(vs),
     }
+
+
+def fit_calibration(
+    logits: NDArray[Any],
+    y: NDArray[Any],
+    codes: list[str],
+    method: str,
+    operating_point: str,
+) -> tuple[Calibration, dict[str, Any]]:
+    """Per-finding Platt/temperature fit + operating threshold on VALIDATION outputs only."""
+    temps, biases, thrs, summary = [], [], [], {}
+    for j, code in enumerate(codes):
+        m = y[:, j] >= 0
+        z, t_y = logits[m, j].astype(np.float64), y[m, j].astype(np.float64)
+        if method == "platt":
+            t, b = fit_platt(z, t_y)
+        else:
+            t, b = fit_temperature(z, t_y), 0.0
+        p = 1 / (1 + np.exp(-(z / t + b)))
+        thr = (
+            youden_threshold(p, t_y)
+            if operating_point == "youden"
+            else sensitivity_target_threshold(p, t_y, 0.9)
+        )
+        temps.append(float(t))
+        biases.append(float(b))
+        thrs.append(float(thr))
+        bm = binary_metrics(p, t_y, thr, n_boot=0)
+        summary[code] = {
+            "auroc": bm.auroc,
+            "sensitivity": bm.sensitivity,
+            "specificity": bm.specificity,
+            "ece": bm.ece,
+            "brier": bm.brier,
+            "temperature": t,
+            "bias": b,
+            "threshold": thr,
+            "n": bm.n,
+            "n_pos": bm.n_pos,
+        }
+    cal = Calibration(temps, thrs, operating_point, codes, biases=biases, method=method)
+    return cal, summary
 
 
 def _mean_auroc(logits: NDArray[Any], y: NDArray[Any]) -> float:
@@ -325,31 +368,13 @@ def train(
 
     # ---- calibration on validation (never on test/external) ----
     val = run_inference(net, dl_va, device)
-    temps, thrs, val_summary = [], [], {}
-    for j, code in enumerate(cfg.finding_codes):
-        m = val["y"][:, j] >= 0
-        z, y = val["logits"][m, j].astype(np.float64), val["y"][m, j].astype(np.float64)
-        t = fit_temperature(z, y)
-        p = 1 / (1 + np.exp(-z / t))
-        thr = (
-            youden_threshold(p, y)
-            if cfg.train.operating_point == "youden"
-            else sensitivity_target_threshold(p, y, 0.9)
-        )
-        temps.append(float(t))
-        thrs.append(float(thr))
-        bm = binary_metrics(p, y, thr, n_boot=0)
-        val_summary[code] = {
-            "auroc": bm.auroc,
-            "sensitivity": bm.sensitivity,
-            "specificity": bm.specificity,
-            "ece": bm.ece,
-            "temperature": t,
-            "threshold": thr,
-            "n": bm.n,
-            "n_pos": bm.n_pos,
-        }
-    calibration = Calibration(temps, thrs, cfg.train.operating_point, list(cfg.finding_codes))
+    calibration, val_summary = fit_calibration(
+        val["logits"],
+        val["y"],
+        list(cfg.finding_codes),
+        cfg.train.calibration,
+        cfg.train.operating_point,
+    )
 
     # ---- OOD model on frontal training features; threshold from validation ----
     ood: OodModel | None = None
@@ -412,3 +437,56 @@ __all__ = [
     "run_inference",
     "train",
 ]
+
+
+def recalibrate(
+    bundle_dir: Path,
+    val_df: pd.DataFrame,
+    *,
+    registry_root: Path,
+    method: str = "platt",
+    operating_point: str | None = None,
+    cache_dir: Path | None = None,
+    batch_size: int = 32,
+    device: str = "auto",
+    notes: str = "",
+) -> tuple[str, dict[str, Any]]:
+    """Refit calibration (and thresholds) for an existing bundle on validation data.
+
+    Weights, config, split and OOD model are copied unchanged; the result is a NEW
+    model_version_id because calibration is part of the version (D-020).
+    """
+    import json as _json
+
+    from secondreader.modalities.cxr.cache import FrameCache
+    from secondreader.modalities.cxr.model import ModelBundle
+
+    b = ModelBundle.load(bundle_dir, device=device)
+    fc = None
+    if cache_dir is not None and (Path(cache_dir) / "cache.json").exists():
+        fc = FrameCache.open(Path(cache_dir), pre=b.config.preprocess, manifest_sha256=None)
+    ds = ManifestDataset(val_df, b.config.preprocess, augment=False, cache=fc)
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    val = run_inference(b.net, dl, b.device)
+    op = operating_point or b.calibration.operating_point
+    calibration, summary = fit_calibration(
+        val["logits"], val["y"], list(b.calibration.finding_codes), method, op
+    )
+    card = _json.loads((Path(bundle_dir) / "model_card.json").read_text())
+    metrics = dict(card.get("metrics", {}))
+    metrics["val"] = summary
+    metrics["recalibrated_from"] = b.model_version_id
+    mid = save_bundle(
+        Path(registry_root) / "pending",
+        net=b.net.cpu(),
+        cfg=b.config,
+        calibration=calibration,
+        ood=b.ood,
+        split_manifest_sha256=card.get("split_manifest_sha256"),
+        metrics=metrics,
+        datasets=list(card.get("datasets", [])),
+        notes=(notes or f"recalibrated ({method}) from {b.model_version_id}"),
+        reference=card.get("reference"),
+    )
+    log.info("recalibrated", from_model=b.model_version_id, model_version_id=mid, method=method)
+    return mid, summary

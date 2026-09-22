@@ -217,5 +217,39 @@ def fit_temperature(
     return float(np.exp(res.x))
 
 
+def fit_platt(
+    logits: FloatArr,
+    y: FloatArr,
+    *,
+    temperature_bounds: tuple[float, float] = (0.25, 4.0),
+    bias_bounds: tuple[float, float] = (-6.0, 6.0),
+) -> tuple[float, float]:
+    """Platt scaling p = sigmoid(z / T + b) by NLL minimisation. Returns (T, b).
+
+    Temperature alone cannot undo the logit *offset* introduced by positive-class
+    weighting (pos_weight); the bias term can. Bounded so a tiny or perfectly
+    separable validation set cannot drive T → 0 or |b| → ∞.
+    """
+    from scipy.optimize import minimize
+
+    z = np.asarray(logits, dtype=np.float64)
+    t_y = np.asarray(y, dtype=np.float64)
+    if len(np.unique(t_y)) < 2:
+        return 1.0, 0.0
+
+    def nll(params: FloatArr) -> float:
+        log_t, b = params
+        s = z / np.exp(log_t) + b
+        return float(np.mean(np.maximum(s, 0) - s * t_y + np.log1p(np.exp(-np.abs(s)))))
+
+    res = minimize(
+        nll,
+        x0=np.array([0.0, 0.0]),
+        bounds=[(np.log(temperature_bounds[0]), np.log(temperature_bounds[1])), bias_bounds],
+        method="L-BFGS-B",
+    )
+    return float(np.exp(res.x[0])), float(res.x[1])
+
+
 def sigmoid(z: FloatArr) -> FloatArr:
     return np.asarray(1.0 / (1.0 + np.exp(-z)), dtype=np.float64)
