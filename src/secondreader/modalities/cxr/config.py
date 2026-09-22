@@ -64,7 +64,13 @@ class TrainConfig(BaseModel):
     seed: int = 0
     operating_point: Literal["youden", "sens90"] = "youden"
     max_train_samples: int | None = None  # for smoke runs
+    max_steps_per_epoch: int | None = None  # for smoke runs: cap optimizer steps per epoch
     device: str = "auto"
+    # Positive-class weighting for the masked BCE (class imbalance, e.g. NIH pneumothorax ~5%).
+    # "auto" = n_neg / n_pos per finding from the training manifest; a list = explicit weights;
+    # null = unweighted (default).
+    pos_weight: Literal["auto"] | list[float] | None = None
+    prefetch_factor: int = 4  # DataLoader batches prefetched per worker
 
 
 class CxrConfig(BaseModel):

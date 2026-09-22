@@ -72,6 +72,7 @@ ignore = ["S101", "S311"]  # asserts in tests; random for synthetic fixtures
 "tests/**" = ["S", "T20"]
 "scripts/**" = ["T20"]
 "src/secondreader/cli/**" = ["T20"]
+"src/secondreader/modalities/*/cli.py" = ["B008"]  # typer.Option() idiom
 "src/secondreader/core/serving/**" = ["B008"]  # FastAPI Depends()/File() idiom
 
 [tool.mypy]

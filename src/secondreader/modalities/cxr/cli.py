@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from secondreader.core.constants import RESEARCH_USE_LABEL
+
+if TYPE_CHECKING:
+    from secondreader.modalities.cxr.cache import FrameCache
+    from secondreader.modalities.cxr.config import PreprocessConfig
 
 app = typer.Typer(help=f"Chest X-ray plugin — {RESEARCH_USE_LABEL}", no_args_is_help=True)
 
@@ -53,12 +59,35 @@ def split(
     typer.echo(f"manifest sha256: {s.manifest_sha256}  (record in DECISIONS.md when locking)")
 
 
+def _open_caches(
+    cache: Path | None, splits: Path, pre: PreprocessConfig, tiers: list[str]
+) -> dict[str, FrameCache]:
+    """Open `<cache>/<tier>` for each tier, refusing caches built from other manifests/configs."""
+    from secondreader.modalities.cxr.cache import FrameCache
+    from secondreader.modalities.cxr.data import manifest_sha256
+
+    out: dict[str, FrameCache] = {}
+    if cache is None:
+        return out
+    for t in tiers:
+        fc = FrameCache.open(
+            cache / t, pre=pre, manifest_sha256=manifest_sha256(splits / f"{t}.csv")
+        )
+        typer.echo(f"cache {t}: {len(fc)} images at {fc.size}px ({fc.dir})")
+        out[t] = fc
+    return out
+
+
 @app.command("train")
 def train_cmd(
     config: Path = Path("configs/experiments/cxr_baseline.yaml"),
     splits: Path = Path("datasets/splits/v1"),
     registry: Path = Path("models"),
     notes: str = "",
+    cache: Path | None = typer.Option(
+        None, help="preprocessing cache root (from `cxr cache`) holding train/ and val/"
+    ),
+    resume: bool = typer.Option(False, help="resume from <registry>/pending/checkpoint.pt"),
 ) -> None:
     """Train, calibrate, fit OOD, and write a versioned model bundle."""
     import json
@@ -72,6 +101,7 @@ def train_cmd(
     cfg = CxrConfig.load(config)
     tr, va = load_tier(splits, "train"), load_tier(splits, "val")
     sha = (splits / "manifest.sha256").read_text().strip()
+    caches = _open_caches(cache, splits, cfg.preprocess, ["train", "val"])
     reg = yaml.safe_load(Path("datasets/registry.yaml").read_text())["datasets"]
     used = sorted(set(tr["dataset"]) | set(va["dataset"]))
     info = [
@@ -82,15 +112,26 @@ def train_cmd(
         }
         for d in used
     ]
-    mid, metrics = train(
-        cfg,
-        tr,
-        va,
-        registry_root=registry,
-        split_manifest_sha256=sha,
-        datasets_info=info,
-        notes=notes,
-    )
+    try:
+        mid, metrics = train(
+            cfg,
+            tr,
+            va,
+            registry_root=registry,
+            split_manifest_sha256=sha,
+            datasets_info=info,
+            notes=notes,
+            train_cache=caches.get("train"),
+            val_cache=caches.get("val"),
+            resume=resume,
+        )
+    except KeyboardInterrupt:
+        typer.echo(
+            f"interrupted — checkpoint saved to {registry / 'pending' / 'checkpoint.pt'}; "
+            "rerun the same command with --resume",
+            err=True,
+        )
+        raise typer.Exit(code=130) from None
     typer.echo(f"model_version_id: {mid}")
     typer.echo(json.dumps(metrics["val"], indent=2))
 
@@ -167,3 +208,134 @@ def manifest_cmd(
     for code in FINDING_CODES:
         pos = int((df[code] == 1).sum())
         typer.echo(f"  {code:18s} positives={pos:7d}  prevalence={pos / max(len(df), 1):.4f}")
+
+
+@app.command("cache")
+def cache_cmd(
+    splits: Path = Path("datasets/splits/v1"),
+    out: Path = Path("data/cache/v1"),
+    config: Path | None = typer.Option(
+        None, help="experiment YAML; its `preprocess` section replaces --size/--window-*"
+    ),
+    size: int = 320,
+    window_low: float = 0.5,
+    window_high: float = 99.5,
+    tiers: str = "train,val,test,external",
+    workers: int = typer.Option(0, help="decode processes (0 = cpu_count - 2, max 8)"),
+    limit: int | None = typer.Option(None, help="only the first N rows per tier (smoke runs)"),
+    force: bool = False,
+) -> None:
+    """Decode + window + letterbox every image of each split tier once into a uint8 memmap.
+
+    The cache is keyed on (tier manifest sha256, preprocess config); `train --cache` refuses a
+    stale one. Pass --config so the preprocess section is taken from the experiment YAML, or
+    use the same --size/--window-* values as that section.
+    """
+    import os
+
+    from secondreader.modalities.cxr.cache import FrameCache, StaleCacheError, build_cache
+    from secondreader.modalities.cxr.config import CxrConfig, PreprocessConfig
+    from secondreader.modalities.cxr.data import load_manifest, manifest_sha256
+
+    if config is not None:
+        pre = CxrConfig.load(config).preprocess
+    else:
+        pre = PreprocessConfig(
+            image_size=size, window_low_pct=window_low, window_high_pct=window_high
+        )
+    typer.echo(f"preprocess: {pre.model_dump()}")
+    if workers <= 0:
+        workers = max(1, min(8, (os.cpu_count() or 2) - 2))
+    for tier in [t for t in tiers.split(",") if t]:
+        csv = splits / f"{tier}.csv"
+        if not csv.exists():
+            typer.echo(f"{tier}: no {csv}, skipped")
+            continue
+        df = load_manifest(csv)
+        if not len(df):
+            typer.echo(f"{tier}: empty, skipped")
+            continue
+        sha = manifest_sha256(csv)
+        tier_dir = out / tier
+        if not force and (tier_dir / "cache.json").exists():
+            try:
+                fc = FrameCache.open(tier_dir, pre=pre, manifest_sha256=sha)
+                if fc.meta.get("limit") == limit:
+                    typer.echo(f"{tier}: up to date ({len(fc)} images), skipped (use --force)")
+                    continue
+            except StaleCacheError as e:
+                typer.echo(f"{tier}: stale cache, rebuilding ({e})")
+        t0 = time.perf_counter()
+        meta = build_cache(
+            df, manifest_sha256=sha, pre=pre, out_dir=tier_dir, workers=workers, limit=limit
+        )
+        dt = time.perf_counter() - t0
+        typer.echo(
+            f"{tier}: {meta['n']} images → {tier_dir} in {dt:.0f}s "
+            f"({meta['n'] / max(dt, 1e-9):.1f} img/s, {meta['n_failed']} failed)"
+        )
+
+
+bench_app = typer.Typer(help="Throughput micro-benchmarks", no_args_is_help=True)
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("loader")
+def bench_loader_cmd(
+    splits: Path = Path("datasets/splits/v1"),
+    tier: str = "train",
+    cache: Path | None = None,
+    size: int = 320,
+    batch_size: int = 16,
+    num_workers: int = 2,
+    steps: int = 30,
+    augment: bool = True,
+    limit: int | None = None,
+) -> None:
+    """DataLoader images/s for a split tier, with or without a preprocessing cache."""
+    import json
+
+    from secondreader.modalities.cxr.bench import bench_loader
+    from secondreader.modalities.cxr.config import PreprocessConfig
+    from secondreader.modalities.cxr.data import ManifestDataset
+    from secondreader.modalities.cxr.splits import load_tier
+
+    pre = PreprocessConfig(image_size=size)
+    df = load_tier(splits, tier)
+    if limit:
+        df = df.iloc[:limit]
+    fc = _open_caches(cache, splits, pre, [tier]).get(tier)
+    ds = ManifestDataset(df, pre, augment=augment, cache=fc)
+    typer.echo(
+        json.dumps(bench_loader(ds, batch_size=batch_size, num_workers=num_workers, steps=steps))
+    )
+
+
+@bench_app.command("model")
+def bench_model_cmd(
+    size: int = 320,
+    batch_size: int = 16,
+    device: str = "auto",
+    channels_last: bool = False,
+    autocast: bool = False,
+    steps: int = 20,
+    backbone: str = "densenet121",
+) -> None:
+    """DenseNet forward/backward images/s on the selected device (synthetic tensors)."""
+    import json
+
+    from secondreader.modalities.cxr.bench import bench_model
+
+    typer.echo(
+        json.dumps(
+            bench_model(
+                size=size,
+                batch_size=batch_size,
+                device=device,
+                channels_last=channels_last,
+                autocast=autocast,
+                steps=steps,
+                backbone=backbone,
+            )
+        )
+    )
