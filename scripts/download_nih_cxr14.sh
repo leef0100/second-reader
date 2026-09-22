@@ -68,7 +68,7 @@ METADATA=(
 )
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
-file_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+file_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }  # GNU first: BSD -f means "filesystem" on Linux
 md5_of() { if command -v md5sum >/dev/null; then md5sum "$1" | cut -d' ' -f1; else md5 -q "$1"; fi; }
 sha256_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
 
