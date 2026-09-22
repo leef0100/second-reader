@@ -1,12 +1,15 @@
 """Run one instance through its modality plugin and persist everything (principles 2,3,7,8).
 
 Used by the job worker (async path via Orthanc) and by `POST /v1/infer` (sync path).
+The Orthanc B push is not done here: it is a `push_results` job (D-030) so a result
+can never exist in Postgres without a retried attempt to reach the archive/OHIF.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -14,18 +17,26 @@ import structlog
 from sqlalchemy.orm import Session
 
 from secondreader.core.constants import GATE_UNABLE_TO_ASSESS
-from secondreader.core.db.models import Instance, ModelVersion, Prediction, Study
+from secondreader.core.db.models import Instance, Job, ModelVersion, Prediction, Study
 from secondreader.core.dicom import read_dicom
 from secondreader.core.dicom.imaging import to_imaging_input
 from secondreader.core.plugins.protocol import Finding, GateResult, ModalityPlugin
 from secondreader.core.results import build_results
+from secondreader.core.serving import queue
 from secondreader.core.serving.deps import Container
 
 log = structlog.get_logger(__name__)
 
+PUSH_JOB_KIND = "push_results"
+PUSH_MAX_ATTEMPTS = 5
+
 
 class NoPluginError(RuntimeError):
     pass
+
+
+class ArchiveUnreachableError(RuntimeError):
+    """Orthanc B did not answer; the push job will retry with backoff."""
 
 
 def ensure_model_version(session: Session, plugin: ModalityPlugin) -> ModelVersion:
@@ -132,7 +143,9 @@ def run_inference_for_instance(
     session.flush()
 
     if push_to_archive:
-        _push_archive(c, session, instance, raw, rb.sr_bytes, [d for _, _, d in rb.sc_items])
+        enqueue_push(session, pred)
+    else:
+        pred.push_status = {"state": "skipped", "attempts": 0}
 
     log.info(
         "prediction",
@@ -152,27 +165,77 @@ def _image01(plugin: ModalityPlugin) -> Any:
     return fn() if callable(fn) else None
 
 
-def _push_archive(
-    c: Container, session: Session, instance: Instance, image: bytes, sr: bytes, scs: list[bytes]
-) -> None:
-    """Best-effort push of de-identified image + results to Orthanc B (the platform archive)."""
-    try:
-        if not c.orthanc_b.reachable():
-            log.warning("orthanc_b_unreachable")
-            return
-        r = c.orthanc_b.upload(image)
-        for blob in [sr, *scs]:
-            c.orthanc_b.upload(blob)
-        study: Study | None = session.get(Study, instance.series.study_id)
-        if study is not None and not study.orthanc_b_id:
-            study.orthanc_b_id = str(r.get("ParentStudy", ""))
-            session.flush()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("orthanc_b_push_failed", error=str(exc))
+def enqueue_push(session: Session, pred: Prediction) -> Job:
+    """Queue the archive push for a prediction (5 attempts, backing off; see queue.py)."""
+    job = queue.enqueue(
+        session, PUSH_JOB_KIND, {"prediction_id": pred.id}, max_attempts=PUSH_MAX_ATTEMPTS
+    )
+    pred.push_status = {"state": "queued", "attempts": 0, "job_id": job.id}
+    session.flush()
+    return job
+
+
+def push_results_to_archive(
+    c: Container,
+    session: Session,
+    pred: Prediction,
+    *,
+    job_id: str | None = None,
+    attempt: int = 1,
+) -> dict[str, Any]:
+    """Upload the de-identified source image + SR + SC overlays to Orthanc B.
+
+    Raises when the archive is unreachable or rejects an object, so the caller (the
+    `push_results` handler) can let the queue retry. Orthanc uploads are idempotent
+    (same SOP Instance UID → same stored instance), so a partial push is safe to repeat.
+    On success records `push_status = pushed` and the study's Orthanc B id.
+    """
+    instance = session.get(Instance, pred.instance_id)
+    if instance is None:
+        raise RuntimeError(f"instance {pred.instance_id} of prediction {pred.id} not found")
+    if pred.sr_blob_key is None:
+        raise RuntimeError(f"prediction {pred.id} has no SR blob to push")
+    blobs = [
+        c.blobs.get(instance.blob_key),
+        c.blobs.get(pred.sr_blob_key),
+        *(c.blobs.get(str(k)) for k in pred.sc_blob_keys),
+    ]
+    if not c.orthanc_b.reachable():
+        raise ArchiveUnreachableError(c.settings.orthanc_b_url)
+    first = c.orthanc_b.upload(blobs[0])
+    for blob in blobs[1:]:
+        c.orthanc_b.upload(blob)
+    orthanc_study_id = str(first.get("ParentStudy", ""))
+    study: Study | None = session.get(Study, pred.study_id)
+    if study is not None and not study.orthanc_b_id and orthanc_study_id:
+        study.orthanc_b_id = orthanc_study_id
+    status: dict[str, Any] = {
+        "state": "pushed",
+        "attempts": attempt,
+        "job_id": job_id,
+        "pushed_at": datetime.now(UTC).isoformat(),
+        "orthanc_study_id": orthanc_study_id,
+        "n_objects": len(blobs),
+    }
+    pred.push_status = status
+    session.flush()
+    log.info(
+        "push_results_done",
+        prediction_id=pred.id,
+        n_objects=len(blobs),
+        attempt=attempt,
+        orthanc_study_id=orthanc_study_id,
+    )
+    return status
 
 
 __all__ = [
+    "ArchiveUnreachableError",
     "NoPluginError",
+    "PUSH_JOB_KIND",
+    "PUSH_MAX_ATTEMPTS",
+    "enqueue_push",
+    "push_results_to_archive",
     "run_inference_for_instance",
     "ensure_model_version",
     "GATE_UNABLE_TO_ASSESS",

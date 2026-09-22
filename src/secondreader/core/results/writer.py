@@ -1,9 +1,16 @@
 """Results output: JSON + DICOM SR (TID 1500) + Secondary Capture overlays (D-005).
 
-Every artefact carries the research-use label. The SR references the source
-image and, per finding, records: finding type (SNOMED), calibrated probability
-(numeric measurement), presence at the operating point (qualitative evaluation),
-and a bounding-box image region. Gated-out inputs produce an SR stating
+Every artefact carries the research-use label. The SR is a **Comprehensive 3D SR**
+(the SOP class IHE AI Results Rev 1.3 requires; a superset of Comprehensive SR,
+D-029) whose root is TID 1500. It references the source image and, per finding,
+records: finding type (SNOMED), calibrated probability (numeric measurement),
+presence at the operating point (qualitative evaluation, D-022), the AIR
+negative-finding idiom ``(373572006, SCT, "Clinical finding absent") = finding``
+when absent, a bounding-box image region tagged with its geometric purpose
+(``Bounded by``, CID 219), and an ObservationUID per finding group. The SOP
+instance carries a ContributingEquipmentSequence item (purpose *Processing
+Equipment*) whose model name / software version mirror the TID 4019 algorithm
+identification (name / model version id). Gated-out inputs produce an SR stating
 "unable to assess" with the reasons, and no SC overlays.
 """
 
@@ -40,6 +47,14 @@ _ASSESSABILITY = hd.sr.CodedConcept(
 _CHEST_XRAY = hd.sr.CodedConcept(
     value="399208008", scheme_designator="SCT", meaning="Plain X-ray of chest"
 )
+# IHE AIR Rev 1.3 (RAD TF-3 §6.5.3.2) negative-finding idiom: the *concept name* is
+# "Clinical finding absent" and the *value* is the finding that was looked for.
+CLINICAL_FINDING_ABSENT = hd.sr.CodedConcept(
+    value="373572006", scheme_designator="SCT", meaning="Clinical finding absent"
+)
+# CID 219 "Geometric purpose of region": our POLYLINE is a bounding box, not a contour.
+BOX_GEOMETRIC_PURPOSE = codes.SCT.BoundedBy
+ALGORITHM_NAME = "secondreader-cxr"
 
 
 @dataclass
@@ -77,7 +92,30 @@ def findings_to_json(findings: list[Finding]) -> list[dict[str, Any]]:
 
 
 def _algorithm(model_version_id: str) -> hd.sr.AlgorithmIdentification:
-    return hd.sr.AlgorithmIdentification(name="secondreader-cxr", version=model_version_id)
+    return hd.sr.AlgorithmIdentification(name=ALGORITHM_NAME, version=model_version_id)
+
+
+def _contributing_equipment(model_version_id: str) -> hd.ContributingEquipment:
+    """AIR §6.5.3.1: describe the algorithm in ContributingEquipmentSequence (0018,A001).
+
+    Values mirror the TID 4019 item (`_algorithm`): model name = algorithm name,
+    software version = model version id (D-006/D-020 content hash).
+    """
+    return hd.ContributingEquipment(
+        manufacturer=MANUFACTURER,
+        purpose_of_reference=codes.DCM.ProcessingEquipment,  # (109102, DCM)
+        manufacturer_model_name=ALGORITHM_NAME,
+        software_versions=model_version_id,
+        contribution_datetime=datetime.now(UTC),
+        contribution_description=f"AI second reader inference; {RESEARCH_USE_LABEL}"[:64],
+    )
+
+
+def _stamp_observation_uid(group: hd.sr.ContentSequence) -> str:
+    """AIR §6.5.3.1: every finding group carries an ObservationUID (0040,A171)."""
+    uid = generate_uid(prefix="2.25.")
+    group[0].ObservationUID = uid  # group[0] is the TID 1410/1501 CONTAINER item
+    return uid
 
 
 def _observation_context(model_version_id: str) -> hd.sr.ObservationContext:
@@ -172,47 +210,58 @@ def build_sr(
                     algorithm_id=_algorithm(model_version_id),
                 )
             ]
+            # Two idioms, deliberately both (D-029): our Presence evaluation (D-022) is
+            # what the review UI/JSON consumers read; the AIR negative concept is what
+            # an AIR-conformant Imaging Document Consumer reads. The finding type stays
+            # on the group because the probability measurement is "P(finding)".
             quals = [
                 hd.sr.QualitativeEvaluation(
                     name=_PRESENCE, value=_PRESENT if f.present else _ABSENT
                 )
             ]
+            if not f.present:
+                quals.append(
+                    hd.sr.QualitativeEvaluation(name=CLINICAL_FINDING_ABSENT, value=finding_type)
+                )
             tid = hd.sr.TrackingIdentifier(
                 uid=generate_uid(prefix="2.25."), identifier=f"{f.code}-{i}"
             )
             region = _box_region(f, src)
+            group: (
+                hd.sr.PlanarROIMeasurementsAndQualitativeEvaluations
+                | hd.sr.MeasurementsAndQualitativeEvaluations
+            )
             if region is not None:
-                groups.append(
-                    hd.sr.PlanarROIMeasurementsAndQualitativeEvaluations(
-                        tracking_identifier=tid,
-                        referenced_region=region,
-                        finding_type=finding_type,
-                        algorithm_id=_algorithm(model_version_id),
-                        measurements=measurements,
-                        qualitative_evaluations=quals,
-                    )
+                group = hd.sr.PlanarROIMeasurementsAndQualitativeEvaluations(
+                    tracking_identifier=tid,
+                    referenced_region=region,
+                    finding_type=finding_type,
+                    algorithm_id=_algorithm(model_version_id),
+                    measurements=measurements,
+                    qualitative_evaluations=quals,
+                    geometric_purpose=BOX_GEOMETRIC_PURPOSE,  # (130400, DCM) = Bounded by
                 )
             else:
-                groups.append(
-                    hd.sr.MeasurementsAndQualitativeEvaluations(
-                        tracking_identifier=tid,
-                        finding_type=finding_type,
-                        algorithm_id=_algorithm(model_version_id),
-                        measurements=measurements,
-                        qualitative_evaluations=quals,
-                    )
+                group = hd.sr.MeasurementsAndQualitativeEvaluations(
+                    tracking_identifier=tid,
+                    finding_type=finding_type,
+                    algorithm_id=_algorithm(model_version_id),
+                    measurements=measurements,
+                    qualitative_evaluations=quals,
                 )
+            _stamp_observation_uid(group)
+            groups.append(group)
     else:
         tid = hd.sr.TrackingIdentifier(uid=generate_uid(prefix="2.25."), identifier="gate")
-        groups.append(
-            hd.sr.MeasurementsAndQualitativeEvaluations(
-                tracking_identifier=tid,
-                algorithm_id=_algorithm(model_version_id),
-                qualitative_evaluations=[
-                    hd.sr.QualitativeEvaluation(name=_ASSESSABILITY, value=_UNABLE)
-                ],
-            )
+        gate_group = hd.sr.MeasurementsAndQualitativeEvaluations(
+            tracking_identifier=tid,
+            algorithm_id=_algorithm(model_version_id),
+            qualitative_evaluations=[
+                hd.sr.QualitativeEvaluation(name=_ASSESSABILITY, value=_UNABLE)
+            ],
         )
+        _stamp_observation_uid(gate_group)
+        groups.append(gate_group)
 
     report = hd.sr.MeasurementReport(
         observation_context=_observation_context(model_version_id),
@@ -224,7 +273,9 @@ def build_sr(
         # SCOORD regions, so the library is omitted for robustness.
         referenced_images=None,
     )
-    sr = hd.sr.ComprehensiveSR(
+    # Comprehensive 3D SR: the IOD IHE AIR mandates (superset of Comprehensive SR; our
+    # regions stay 2D SCOORD, which the 3D IOD permits and OHIF hydrates).
+    sr = hd.sr.Comprehensive3DSR(
         evidence=[src],
         content=report[0],
         series_instance_uid=generate_uid(prefix="2.25."),
@@ -235,6 +286,7 @@ def build_sr(
         is_complete=True,
         is_final=False,  # never "final": a clinician reads it
         series_description=f"AI second reader SR - {RESEARCH_USE_LABEL}"[:64],
+        contributing_equipment=[_contributing_equipment(model_version_id)],
     )
     sr.SoftwareVersions = SOFTWARE_VERSIONS
     sr.ContentDescription = f"{RESEARCH_USE_LABEL} model={model_version_id}"[:64]
