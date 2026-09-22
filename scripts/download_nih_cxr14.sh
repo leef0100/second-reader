@@ -131,7 +131,7 @@ fetch_one() {
   tar -xzf "$arc" -C "$ROOT/images" --strip-components=1
   touch "$stamp"
   [[ $DELETE_ARCHIVES -eq 1 ]] && rm -f "$arc"
-  log "extracted     $name → $(find "$ROOT/images" -name '*.png' | wc -l | tr -d ' ') png so far"
+  log "extracted     $name → $(find -L "$ROOT/images" -name '*.png' | wc -l | tr -d ' ') png so far"
 }
 
 export -f fetch_one log file_size md5_of
@@ -146,7 +146,7 @@ if [[ $rc -ne 0 ]]; then
   printf '%s\n' "${ARCHIVES[@]}" | xargs -P 1 -I{} bash -c 'fetch_one {}'
 fi
 
-n=$(find "$ROOT/images" -name '*.png' | wc -l | tr -d ' ')
+n=$(find -L "$ROOT/images" -name '*.png' | wc -l | tr -d ' ')
 log "png count: $n (expected 112120)"
 if [[ "$n" == "112120" ]]; then
   log "COMPLETE. Next: uv run secondreader cxr manifest nih $ROOT --out datasets/manifests/nih_cxr14.csv"
