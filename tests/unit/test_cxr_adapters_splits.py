@@ -9,6 +9,8 @@ import pytest
 from secondreader.modalities.cxr import adapters
 from secondreader.modalities.cxr.data import MANIFEST_COLUMNS, load_manifest, save_manifest
 from secondreader.modalities.cxr.splits import (
+    OFFICIAL_TEST_TIER,
+    OfficialSplit,
     assign_tier,
     build_splits,
     check_no_patient_leakage,
@@ -146,3 +148,92 @@ def test_leakage_check():
     df["tier"] = ["train", "val", "train", "train"]
     with pytest.raises(ValueError, match="leakage"):
         check_no_patient_leakage(df)
+
+
+def test_official_split_pins_test_list_and_hashes_only_listed_patients(tmp_path):
+    df = pd.concat(
+        [_fake_manifest("nih_cxr14", 300), _fake_manifest("vindr", 20)], ignore_index=True
+    )
+    nih = df[df["dataset"] == "nih_cxr14"]
+    test_ids = nih[nih["patient_id"].isin({f"nih_cxr14-{p}" for p in range(50)})]["image_id"]
+    tv_ids = nih[nih["patient_id"].isin({f"nih_cxr14-{p}" for p in range(50, 290)})]["image_id"]
+    (tmp_path / "test_list.txt").write_text("\n".join(test_ids) + "\n")
+    (tmp_path / "train_val_list.txt").write_text("\n".join(tv_ids) + "\n")
+    off = OfficialSplit.nih(tmp_path / "test_list.txt")
+    assert off.dataset == "nih_cxr14" and len(off.test_ids) == 100
+    assert off.trainval_ids is not None and len(off.trainval_ids) == 480
+
+    s = build_splits(
+        df,
+        out_dir=tmp_path,
+        version="off",
+        salt="s",
+        external_datasets={"vindr"},
+        train_pct=90,
+        val_pct=10,
+        official=off,
+    )
+    assert set(s.tiers) == {"train", "val", "test", "external", OFFICIAL_TEST_TIER}
+    assert s.tiers[OFFICIAL_TEST_TIER]["n"] == 100 and s.tiers["test"]["n"] == 0
+    assert s.tiers["train"]["n"] + s.tiers["val"]["n"] == 480  # patients 290..299 dropped
+    assert s.tiers["external"]["n"] == 40
+    assert s.official == {
+        "dataset": "nih_cxr14",
+        "source": str(tmp_path / "test_list.txt"),
+        "n_test_ids": 100,
+        "n_test_matched": 100,
+        "n_dropped_unlisted": 20,
+        "train_pct": 90,
+        "val_pct": 10,
+    }
+    got = load_manifest(tmp_path / "off" / "official_test.csv")
+    assert set(got["image_id"]) == set(test_ids)
+    verify_locked(tmp_path / "off", s.manifest_sha256)
+    # without a train_val list nothing is dropped
+    s2 = build_splits(
+        df,
+        out_dir=tmp_path,
+        version="off2",
+        salt="s",
+        external_datasets={"vindr"},
+        train_pct=90,
+        val_pct=10,
+        official=OfficialSplit("nih_cxr14", frozenset(test_ids)),
+    )
+    assert s2.tiers["train"]["n"] + s2.tiers["val"]["n"] == 500
+    # a published list that splits a patient across tiers is refused (D-008)
+    leaky = OfficialSplit("nih_cxr14", frozenset([*test_ids, "nih_cxr14-60-0"]))
+    with pytest.raises(ValueError, match="leakage"):
+        build_splits(
+            df, out_dir=tmp_path, version="bad", salt="s", external_datasets=set(), official=leaky
+        )
+    # the classic (non-official) split is untouched: same four tiers, same layout
+    s3 = build_splits(df, out_dir=tmp_path, version="v1", salt="s", external_datasets={"vindr"})
+    assert set(s3.tiers) == {"train", "val", "test", "external"} and s3.official is None
+
+
+def test_split_cli_official_flag(tmp_path):
+    from typer.testing import CliRunner
+
+    from secondreader.modalities.cxr.cli import app
+
+    df = _fake_manifest("nih_cxr14", 60)
+    save_manifest(df, tmp_path / "m.csv")
+    ids = df[df["patient_id"].isin({f"nih_cxr14-{p}" for p in range(10)})]["image_id"]
+    (tmp_path / "test_list.txt").write_text("\n".join(ids) + "\n")
+    res = CliRunner().invoke(
+        app,
+        [
+            "split",
+            str(tmp_path / "m.csv"),
+            "--out",
+            str(tmp_path / "splits"),
+            "--version",
+            "o",
+            "--official-nih",
+            str(tmp_path / "test_list.txt"),
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert "official_test=20" in res.output and "test=0" in res.output
+    assert "'train_pct': 90" in res.output

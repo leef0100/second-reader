@@ -17,7 +17,7 @@ from secondreader.modalities.cxr.config import CxrConfig
 from secondreader.modalities.cxr.gate import OodModel
 from secondreader.modalities.cxr.model import Calibration, CxrNet, ModelBundle, save_bundle
 from secondreader.modalities.cxr.plugin import CxrPlugin
-from secondreader.modalities.cxr.saliency import box_from_heatmap, grad_cam
+from secondreader.modalities.cxr.saliency import box_from_heatmap, compute_cam, grad_cam, hires_cam
 from tests.fixtures.synthetic import cxr_spec, make_dataset, ultrasound_cine_spec
 
 
@@ -123,6 +123,61 @@ def test_gradcam_and_box(bundle_dir):
     assert box.x_min == pytest.approx(0.5) and box.x_max == pytest.approx(0.75)
     assert box.y_min == pytest.approx(0.2) and box.y_max == pytest.approx(0.4)
     assert box_from_heatmap(np.zeros((4, 4), dtype=np.float32)) is None
+
+
+def test_hirescam_matches_gradcam_for_gap_linear_head_and_config_switch(bundle_dir, tmp_path):
+    b = ModelBundle.load(bundle_dir, device="cpu")
+    torch.manual_seed(1)
+    x = torch.randn(1, 3, 96, 96)
+    g, h = grad_cam(b.net, x, 1), hires_cam(b.net, x, 1)
+    # conv → global average pool → linear: the gradient is spatially constant, so the two
+    # weightings coincide (Draelos & Carin); they diverge only for non-linear heads.
+    assert h.shape == (96, 96) and np.allclose(g, h, atol=1e-4)
+    assert np.allclose(compute_cam(b.net, x, 1, "hirescam"), h)
+    with pytest.raises(ValueError, match="CAM method"):
+        compute_cam(b.net, x, 1, "scorecam")
+    # new bundles default to hirescam; a bundle written before the field existed stays gradcam
+    assert b.config.model.cam == "hirescam"
+    import shutil
+
+    import yaml
+
+    legacy = tmp_path / "legacy"
+    shutil.copytree(bundle_dir, legacy)
+    raw = yaml.safe_load((legacy / "config.yaml").read_text())
+    del raw["model"]["cam"]
+    (legacy / "config.yaml").write_text(yaml.safe_dump(raw))
+    assert ModelBundle.load(legacy, device="cpu").config.model.cam == "gradcam"
+
+
+def test_plugin_threshold_follows_view_position_and_gate_logs_max_logit(
+    bundle_dir, deidentifier, tmp_path
+):
+    import shutil
+
+    d = tmp_path / "perview"
+    shutil.copytree(bundle_dir, d)
+    cal = json.loads((d / "calibration.json").read_text())
+    cal["thresholds_by_view"] = {"PA": [0.6, 0.6, 0.6], "AP": [0.2, 0.2, 0.2]}
+    (d / "calibration.json").write_text(json.dumps(cal))
+    p = CxrPlugin(ModelBundle.load(d, device="cpu"))
+
+    def inp(view):
+        ds = deidentifier.deidentify(
+            make_dataset(cxr_spec(view_position=view, rows=128, cols=128))
+        ).dataset
+        return to_imaging_input(ds, input_sha256=f"{view}".ljust(64, "x"))
+
+    thr = {v: [f.threshold for f in p.predict(inp(v))] for v in ("PA", "AP")}
+    assert thr["PA"] == [0.6] * 3 and thr["AP"] == [0.2] * 3
+    # an input whose ViewPosition the calibration does not list gets the global thresholds
+    ll = p.predict(inp("LL"))
+    assert [f.threshold for f in ll] == [0.5] * 3
+    gate = p.quality_gate(inp("PA"))
+    assert "max_logit" in gate.scores and np.isfinite(gate.scores["max_logit"])
+    # the old bundle (no per-view thresholds) still reports its global thresholds
+    p0 = CxrPlugin(ModelBundle.load(bundle_dir, device="cpu"))
+    assert [f.threshold for f in p0.predict(inp("AP"))] == [0.5] * 3
 
 
 def test_finding_requires_localization_when_present():

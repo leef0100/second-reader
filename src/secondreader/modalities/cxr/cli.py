@@ -44,18 +44,39 @@ def split(
     version: str = "v1",
     salt: str = "second-reader-v1",
     external: str = "vindr_cxr,padchest,brax,synth-b",
+    official_nih: Path | None = typer.Option(
+        None,
+        "--official-nih",
+        help="NIH test_list.txt → tier `official_test`; train/val are hashed from the sibling "
+        "train_val_list.txt patients only (rows in neither list are dropped). Default "
+        "train/val split becomes 90/10 (no hashed `test` tier).",
+    ),
+    train_pct: int | None = typer.Option(None, help="hashed train share (default 80; 90 official)"),
+    val_pct: int | None = typer.Option(None, help="hashed val share (default 10)"),
 ) -> None:
     """Build patient-level hashed splits from one or more manifests."""
     import pandas as pd
 
     from secondreader.modalities.cxr.data import load_manifest
-    from secondreader.modalities.cxr.splits import build_splits
+    from secondreader.modalities.cxr.splits import OfficialSplit, build_splits
 
+    official = OfficialSplit.nih(official_nih) if official_nih is not None else None
+    tr = train_pct if train_pct is not None else (90 if official else 80)
+    va = val_pct if val_pct is not None else 10
     df = pd.concat([load_manifest(m) for m in manifests], ignore_index=True)
     s = build_splits(
-        df, out_dir=out, version=version, salt=salt, external_datasets=set(external.split(","))
+        df,
+        out_dir=out,
+        version=version,
+        salt=salt,
+        external_datasets=set(external.split(",")),
+        train_pct=tr,
+        val_pct=va,
+        official=official,
     )
     typer.echo(f"splits {version}: " + ", ".join(f"{t}={v['n']}" for t, v in s.tiers.items()))
+    if s.official:
+        typer.echo(f"official split: {s.official}")
     typer.echo(f"manifest sha256: {s.manifest_sha256}  (record in DECISIONS.md when locking)")
 
 
@@ -145,15 +166,20 @@ def eval_cmd(
     out: Path = Path("runs"),
     n_boot: int = 200,
     no_gate: bool = False,
+    cache: Path | None = typer.Option(
+        None, help="preprocessing cache root (from `cxr cache`) holding <tier>/; skips decoding"
+    ),
+    device: str = "auto",
 ) -> None:
     """Evaluate a bundle on a split tier (default: the locked external test set)."""
     from secondreader.modalities.cxr.evaluate import evaluate
     from secondreader.modalities.cxr.model import ModelBundle
     from secondreader.modalities.cxr.splits import load_tier
 
-    bundle = ModelBundle.load(registry / model_id)
+    bundle = ModelBundle.load(registry / model_id, device=device)
     df = load_tier(splits, tier)
     sha = (splits / "manifest.sha256").read_text().strip()
+    fc = _open_caches(cache, splits, bundle.config.preprocess, [tier]).get(tier)
     out_dir = out / model_id / tier
     rep = evaluate(
         bundle,
@@ -164,10 +190,12 @@ def eval_cmd(
         out_dir=out_dir,
         n_boot=n_boot,
         apply_gate=not no_gate,
+        cache=fc,
     )
     for code, m in rep.overall.items():
         typer.echo(
-            f"{code:18s} AUROC={m.auroc} sens={m.sensitivity} spec={m.specificity} ECE={m.ece}"
+            f"{code:18s} AUROC={m.auroc} sens={m.sensitivity} spec={m.specificity} "
+            f"ECE={m.ece} ECE_eq_mass={m.ece_equal_mass} Brier={m.brier}"
         )
     typer.echo(f"report: {out_dir / 'report.md'}  (gated out: {rep.n_gated_out})")
 
@@ -184,6 +212,9 @@ def recalibrate_cmd(
     method: str = typer.Option("platt", help="platt (scale+bias) | temperature"),
     operating_point: str | None = None,
     device: str = "auto",
+    per_view: bool = typer.Option(
+        False, "--per-view", help="choose the operating threshold per view (PA/AP) — D-029"
+    ),
 ) -> None:
     """Refit calibration + thresholds on the validation tier → new model version (same weights)."""
     import json
@@ -200,8 +231,9 @@ def recalibrate_cmd(
         operating_point=operating_point,
         cache_dir=(cache / "val") if cache else None,
         device=device,
+        per_view=per_view,
     )
-    typer.echo(f"model_version_id: {mid}  (from {model_id}, {method})")
+    typer.echo(f"model_version_id: {mid}  (from {model_id}, {method}, per_view={per_view})")
     typer.echo(json.dumps(summary, indent=2))
 
 
@@ -250,7 +282,7 @@ def cache_cmd(
     size: int = 320,
     window_low: float = 0.5,
     window_high: float = 99.5,
-    tiers: str = "train,val,test,external",
+    tiers: str = "train,val,test,external,official_test",
     workers: int = typer.Option(0, help="decode processes (0 = cpu_count - 2, max 8)"),
     limit: int | None = typer.Option(None, help="only the first N rows per tier (smoke runs)"),
     force: bool = False,

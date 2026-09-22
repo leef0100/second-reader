@@ -19,7 +19,7 @@ from secondreader.modalities.cxr.config import FINDING_DISPLAY, FINDING_SNOMED
 from secondreader.modalities.cxr.gate import combine, header_checks, learned_checks, pixel_checks
 from secondreader.modalities.cxr.model import ModelBundle
 from secondreader.modalities.cxr.preprocess import Preprocessed, preprocess_input
-from secondreader.modalities.cxr.saliency import box_from_heatmap, grad_cam, to_source_coords
+from secondreader.modalities.cxr.saliency import box_from_heatmap, compute_cam, to_source_coords
 
 CXR_SOP_CLASSES = {
     "1.2.840.10008.5.1.4.1.1.1",  # CR Image Storage
@@ -114,6 +114,7 @@ class CxrPlugin:
             view_probs=c.view_probs,
             features=c.features,
             ood=self.bundle.ood,
+            logits=c.logits,
         )
         return combine((hdr, {}), px, lr)
 
@@ -121,9 +122,11 @@ class CxrPlugin:
         c = self._forward(inp)
         assert c.logits is not None and c.pre is not None and c.x is not None
         probs = self.bundle.calibration.apply(c.logits[None])[0]
+        # Operating point per view position (D-029); unknown/unlisted views use the global one.
+        thresholds = self.bundle.calibration.thresholds_for_view(inp.view_position)
         findings: list[Finding] = []
         for j, code in enumerate(self.bundle.calibration.finding_codes):
-            cam = grad_cam(self.bundle.net, c.x, j)
+            cam = compute_cam(self.bundle.net, c.x, j, self.bundle.config.model.cam)
             heat = to_source_coords(cam, c.pre.geometry)
             box = box_from_heatmap(heat)
             snomed = FINDING_SNOMED.get(code)
@@ -132,7 +135,7 @@ class CxrPlugin:
                     code=code,
                     display_name=FINDING_DISPLAY.get(code, code),
                     probability=float(np.clip(probs[j], 0.0, 1.0)),
-                    threshold=float(self.bundle.calibration.thresholds[j]),
+                    threshold=float(thresholds[j]),
                     localization=Localization(heatmap=heat, boxes=(box,) if box else ()),
                     snomed_code=snomed[0] if snomed else None,
                     snomed_meaning=snomed[1] if snomed else None,

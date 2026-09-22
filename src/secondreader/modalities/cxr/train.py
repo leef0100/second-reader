@@ -34,7 +34,13 @@ from secondreader.modalities.cxr.cache import FrameCache
 from secondreader.modalities.cxr.config import FINDING_CODES, CxrConfig
 from secondreader.modalities.cxr.data import ManifestDataset
 from secondreader.modalities.cxr.gate import OodModel
-from secondreader.modalities.cxr.model import Calibration, CxrNet, pick_device, save_bundle
+from secondreader.modalities.cxr.model import (
+    Calibration,
+    CxrNet,
+    normalize_view,
+    pick_device,
+    save_bundle,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -105,15 +111,37 @@ def run_inference(
     }
 
 
+def _pick_threshold(p: NDArray[np.float64], y: NDArray[np.float64], operating_point: str) -> float:
+    if operating_point == "youden":
+        return float(youden_threshold(p, y))
+    return float(sensitivity_target_threshold(p, y, 0.9))
+
+
 def fit_calibration(
     logits: NDArray[Any],
     y: NDArray[Any],
     codes: list[str],
     method: str,
     operating_point: str,
+    views: NDArray[Any] | None = None,
+    *,
+    min_per_view: int = 20,
 ) -> tuple[Calibration, dict[str, Any]]:
-    """Per-finding Platt/temperature fit + operating threshold on VALIDATION outputs only."""
+    """Per-finding Platt/temperature fit + operating threshold on VALIDATION outputs only.
+
+    With `views` (one view position per row, e.g. the manifest `view` column) the operating
+    threshold is additionally chosen per view (D-029). Scale and bias stay global. A view
+    needs at least `min_per_view` positives and negatives for a finding; otherwise that
+    finding keeps the global threshold in that view's list.
+    """
     temps, biases, thrs, summary = [], [], [], {}
+    views_u: NDArray[Any] | None = None
+    view_keys: list[str] = []
+    if views is not None:
+        views_u = np.asarray([normalize_view(v) for v in views], dtype=object)
+        view_keys = sorted(v for v in set(views_u.tolist()) if v)
+    by_view: dict[str, list[float]] = {v: [] for v in view_keys}
+    fitted_views: set[str] = set()  # views with ≥ 1 finding fitted; others are not stored
     for j, code in enumerate(codes):
         m = y[:, j] >= 0
         z, t_y = logits[m, j].astype(np.float64), y[m, j].astype(np.float64)
@@ -122,11 +150,7 @@ def fit_calibration(
         else:
             t, b = fit_temperature(z, t_y), 0.0
         p = 1 / (1 + np.exp(-(z / t + b)))
-        thr = (
-            youden_threshold(p, t_y)
-            if operating_point == "youden"
-            else sensitivity_target_threshold(p, t_y, 0.9)
-        )
+        thr = _pick_threshold(p, t_y, operating_point)
         temps.append(float(t))
         biases.append(float(b))
         thrs.append(float(thr))
@@ -136,6 +160,7 @@ def fit_calibration(
             "sensitivity": bm.sensitivity,
             "specificity": bm.specificity,
             "ece": bm.ece,
+            "ece_equal_mass": bm.ece_equal_mass,
             "brier": bm.brier,
             "temperature": t,
             "bias": b,
@@ -143,7 +168,43 @@ def fit_calibration(
             "n": bm.n,
             "n_pos": bm.n_pos,
         }
-    cal = Calibration(temps, thrs, operating_point, codes, biases=biases, method=method)
+        if views_u is None:
+            continue
+        vm = views_u[m]
+        per_view: dict[str, Any] = {}
+        for v in view_keys:
+            sel = vm == v
+            p_v, y_v = p[sel], t_y[sel]
+            n_pos_v, n_neg_v = int((y_v == 1).sum()), int((y_v == 0).sum())
+            if n_pos_v >= min_per_view and n_neg_v >= min_per_view:
+                thr_v = _pick_threshold(p_v, y_v, operating_point)
+                fitted_views.add(v)
+            else:
+                thr_v = float(thr)  # too little data in this view → global threshold
+            by_view[v].append(float(thr_v))
+            at_view = binary_metrics(p_v, y_v, thr_v, n_boot=0)
+            at_global = binary_metrics(p_v, y_v, thr, n_boot=0)
+            per_view[v] = {
+                "threshold": float(thr_v),
+                "n": at_view.n,
+                "n_pos": at_view.n_pos,
+                "auroc": at_view.auroc,
+                "sensitivity": at_view.sensitivity,
+                "specificity": at_view.specificity,
+                "sensitivity_at_global": at_global.sensitivity,
+                "specificity_at_global": at_global.specificity,
+                "fitted": n_pos_v >= min_per_view and n_neg_v >= min_per_view,
+            }
+        summary[code]["by_view"] = per_view
+    cal = Calibration(
+        temps,
+        thrs,
+        operating_point,
+        codes,
+        biases=biases,
+        method=method,
+        thresholds_by_view={v: t for v, t in by_view.items() if v in fitted_views},
+    )
     return cal, summary
 
 
@@ -374,6 +435,7 @@ def train(
         list(cfg.finding_codes),
         cfg.train.calibration,
         cfg.train.operating_point,
+        views=ds_va.df["view"].to_numpy() if cfg.train.per_view_thresholds else None,
     )
 
     # ---- OOD model on frontal training features; threshold from validation ----
@@ -384,7 +446,10 @@ def train(
         f_va = val["features"][val["view"] == 0]
         if len(f_tr) >= 32 and len(f_va) >= 5:
             ood = OodModel.fit(
-                f_tr.astype(np.float64), f_va.astype(np.float64), cfg.gate.ood_percentile
+                f_tr.astype(np.float64),
+                f_va.astype(np.float64),
+                cfg.gate.ood_percentile,
+                normalize=cfg.gate.ood_normalize,
             )
         else:
             log.warning("ood_skipped", n_train_feats=len(f_tr), n_val_feats=len(f_va))
@@ -432,7 +497,9 @@ __all__ = [
     "METRICS_NAME",
     "ResumableSampler",
     "compute_pos_weight",
+    "fit_calibration",
     "masked_bce",
+    "recalibrate",
     "resolve_pos_weight",
     "run_inference",
     "train",
@@ -450,11 +517,13 @@ def recalibrate(
     batch_size: int = 32,
     device: str = "auto",
     notes: str = "",
+    per_view: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Refit calibration (and thresholds) for an existing bundle on validation data.
 
     Weights, config, split and OOD model are copied unchanged; the result is a NEW
-    model_version_id because calibration is part of the version (D-020).
+    model_version_id because calibration is part of the version (D-020). `per_view`
+    additionally chooses a threshold per view position (D-029).
     """
     import json as _json
 
@@ -473,12 +542,20 @@ def recalibrate(
     val = run_inference(b.net, dl, b.device)
     op = operating_point or b.calibration.operating_point
     calibration, summary = fit_calibration(
-        val["logits"], val["y"], list(b.calibration.finding_codes), method, op
+        val["logits"],
+        val["y"],
+        list(b.calibration.finding_codes),
+        method,
+        op,
+        views=ds.df["view"].to_numpy() if per_view else None,
     )
     card = _json.loads((Path(bundle_dir) / "model_card.json").read_text())
     metrics = dict(card.get("metrics", {}))
     metrics["val"] = summary
     metrics["recalibrated_from"] = b.model_version_id
+    metrics["per_view_thresholds"] = bool(calibration.thresholds_by_view)
+    if per_view:
+        notes = notes or (f"recalibrated ({method}, per-view thresholds) from {b.model_version_id}")
     mid = save_bundle(
         Path(registry_root) / "pending",
         net=b.net.cpu(),

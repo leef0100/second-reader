@@ -6,6 +6,8 @@ Layers, cheapest first; any failure → `unable_to_assess` with named reasons:
   3. learned — (a) view head: frontal vs lateral/other, trained with the model;
                (b) Mahalanobis distance of penultimate features vs the training
                    feature distribution; threshold = validation percentile.
+                   Optionally on L2-normalised features (Mahalanobis++, `gate.ood_normalize`).
+               (c) MaxLogit is logged beside it as a secondary score; nothing gates on it.
 Layers 3a/3b are skipped (and reported as unavailable) when the model bundle
 lacks them, so the gate degrades honestly rather than silently.
 """
@@ -22,30 +24,56 @@ from secondreader.core.plugins.protocol import GateResult, ImagingInput
 from secondreader.modalities.cxr.config import GateConfig
 
 
+def l2_normalize(feats: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Row-wise unit L2 norm (Mahalanobis++); works on one vector or a (N, D) matrix."""
+    f = np.asarray(feats, dtype=np.float64)
+    norm = np.linalg.norm(f, axis=-1, keepdims=True)
+    return np.asarray(f / np.maximum(norm, 1e-12), dtype=np.float64)
+
+
 @dataclass
 class OodModel:
     mean: NDArray[np.float64]  # (D,)
     precision: NDArray[np.float64]  # (D, D)
     threshold: float
+    # True when the Gaussian was fit on L2-normalised features (Mahalanobis++). Stored in
+    # ood.npz so scoring always matches the fit, whatever the current config says.
+    normalize: bool = False
 
     def distance(self, feat: NDArray[np.float64]) -> float:
-        d = feat.astype(np.float64) - self.mean
+        f = feat.astype(np.float64)
+        if self.normalize:
+            f = l2_normalize(f)
+        d = f - self.mean
         return float(np.sqrt(max(d @ self.precision @ d, 0.0)))
 
     @classmethod
     def fit(
-        cls, train_feats: NDArray[np.float64], val_feats: NDArray[np.float64], percentile: float
+        cls,
+        train_feats: NDArray[np.float64],
+        val_feats: NDArray[np.float64],
+        percentile: float,
+        *,
+        normalize: bool = False,
     ) -> OodModel:
         from sklearn.covariance import LedoitWolf
 
+        tr = l2_normalize(train_feats) if normalize else np.asarray(train_feats, dtype=np.float64)
         # Shrinkage covariance stays well-conditioned even when n < D (e.g. smoke runs).
-        lw = LedoitWolf().fit(train_feats)
+        lw = LedoitWolf().fit(tr)
         mean = np.asarray(lw.location_, dtype=np.float64)
         precision = np.asarray(lw.precision_, dtype=np.float64)
-        m = cls(mean=mean, precision=precision, threshold=0.0)
+        m = cls(mean=mean, precision=precision, threshold=0.0, normalize=normalize)
         dists = np.array([m.distance(f) for f in val_feats])
         m.threshold = float(np.percentile(dists, percentile)) if len(dists) else float("inf")
         return m
+
+
+def max_logit(logits: NDArray[np.float64]) -> float:
+    """MaxLogit (Hendrycks et al. 2022): the largest raw finding logit. Logged as a secondary
+    OOD score only — on medical near-OOD it is close to chance (OpenMIBOOD), so nothing gates
+    on it (D-019 unchanged). Lower = the model is confident about nothing."""
+    return float(np.max(np.asarray(logits, dtype=np.float64)))
 
 
 def header_checks(inp: ImagingInput, cfg: GateConfig) -> list[str]:
@@ -64,14 +92,15 @@ def header_checks(inp: ImagingInput, cfg: GateConfig) -> list[str]:
     return reasons
 
 
-def pixel_checks(
-    a01: NDArray[np.float32], src_h: int, src_w: int, cfg: GateConfig
+def pixel_checks_from_stats(
+    stats: dict[str, float], cfg: GateConfig
 ) -> tuple[list[str], dict[str, float]]:
-    reasons: list[str] = []
+    """Pixel gate from precomputed `input_statistics` (std, saturated_fraction, src_h/w)."""
+    src_h, src_w = int(stats["src_h"]), int(stats["src_w"])
     short, long_ = min(src_h, src_w), max(src_h, src_w)
     aspect = long_ / max(1, short)
-    std = float(a01.std())
-    sat = float(((a01 <= 0.0) | (a01 >= 1.0)).mean())
+    std, sat = float(stats["std"]), float(stats["saturated_fraction"])
+    reasons: list[str] = []
     scores = {"short_side": float(short), "aspect": aspect, "std": std, "saturated_fraction": sat}
     if short < cfg.min_short_side:
         reasons.append(f"image too small ({src_h}x{src_w})")
@@ -84,15 +113,30 @@ def pixel_checks(
     return reasons, scores
 
 
+def pixel_checks(
+    a01: NDArray[np.float32], src_h: int, src_w: int, cfg: GateConfig
+) -> tuple[list[str], dict[str, float]]:
+    stats = {
+        "src_h": float(src_h),
+        "src_w": float(src_w),
+        "std": float(a01.std()),
+        "saturated_fraction": float(((a01 <= 0.0) | (a01 >= 1.0)).mean()),
+    }
+    return pixel_checks_from_stats(stats, cfg)
+
+
 def learned_checks(
     cfg: GateConfig,
     *,
     view_probs: NDArray[np.float64] | None,  # [p_frontal, p_lateral, p_other] or None
     features: NDArray[np.float64] | None,
     ood: OodModel | None,
+    logits: NDArray[np.float64] | None = None,  # raw finding logits → MaxLogit (logged only)
 ) -> tuple[list[str], dict[str, float]]:
     reasons: list[str] = []
     scores: dict[str, float] = {}
+    if logits is not None and len(logits):
+        scores["max_logit"] = max_logit(logits)
     if cfg.view_classifier_enabled and view_probs is not None:
         p_front = float(view_probs[0])
         scores["p_frontal"] = p_front

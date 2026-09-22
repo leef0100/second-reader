@@ -4,14 +4,15 @@ per-finding thresholds, and an OOD feature model — packaged as a versioned bun
 Bundle layout (`<registry>/<model_version_id>/`):
   weights.pt        state_dict
   config.yaml       CxrConfig used for training
-  calibration.json  temperatures, thresholds, operating point, metrics summary
-  ood.npz           mean / precision / threshold for Mahalanobis OOD
+  calibration.json  temperatures, biases, thresholds (+ optional per-view thresholds)
+  ood.npz           mean / precision / threshold (+ normalize flag) for Mahalanobis OOD
   model_card.json   ids, hashes, split manifest hash, dataset licenses, timestamps
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,9 +71,20 @@ def pick_device(pref: str = "auto") -> torch.device:
     return torch.device("cpu")
 
 
+def normalize_view(view: str | None) -> str:
+    """DICOM ViewPosition / manifest `view` → upper-case key; '' when unknown."""
+    return str(view or "").strip().upper() if view is not None and view == view else ""
+
+
 @dataclass
 class Calibration:
-    """p = sigmoid(z / T + b) per finding. `biases` all zero == plain temperature scaling."""
+    """p = sigmoid(z / T + b) per finding. `biases` all zero == plain temperature scaling.
+
+    `thresholds` is the global operating point per finding. `thresholds_by_view` (D-029)
+    optionally overrides it per view position, e.g. {"PA": [...], "AP": [...]}; any view
+    not listed (including unknown) falls back to the global threshold. Scale and bias are
+    never per view — only where the line is drawn.
+    """
 
     temperatures: list[float]
     thresholds: list[float]
@@ -80,10 +92,18 @@ class Calibration:
     finding_codes: list[str]
     biases: list[float] = field(default_factory=list)
     method: str = "temperature"
+    thresholds_by_view: dict[str, list[float]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.biases:
             self.biases = [0.0] * len(self.temperatures)
+        k = len(self.thresholds)
+        self.thresholds_by_view = {
+            normalize_view(v): [float(x) for x in t] for v, t in self.thresholds_by_view.items()
+        }
+        for v, t in self.thresholds_by_view.items():
+            if not v or len(t) != k:
+                raise ValueError(f"thresholds_by_view[{v!r}] must have {k} entries, got {len(t)}")
 
     def apply(self, logits: NDArray[np.float64]) -> NDArray[np.float64]:
         z = np.asarray(logits, dtype=np.float64) / np.asarray(self.temperatures) + np.asarray(
@@ -91,8 +111,20 @@ class Calibration:
         )
         return np.asarray(1.0 / (1.0 + np.exp(-z)))
 
+    def thresholds_for_view(self, view: str | None) -> list[float]:
+        """Per-finding thresholds for one view position (global when unknown / unlisted)."""
+        return list(self.thresholds_by_view.get(normalize_view(view), self.thresholds))
+
+    def threshold_for(self, index: int, view: str | None) -> float:
+        return float(self.thresholds_for_view(view)[index])
+
+    def row_thresholds(self, views: Iterable[str | None]) -> NDArray[np.float64]:
+        """(n, n_findings) thresholds for a sequence of per-row view positions."""
+        rows = [self.thresholds_for_view(v) for v in views]
+        return np.asarray(rows, dtype=np.float64).reshape(-1, len(self.thresholds))
+
     def as_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "temperatures": self.temperatures,
             "biases": self.biases,
             "thresholds": self.thresholds,
@@ -100,6 +132,9 @@ class Calibration:
             "finding_codes": self.finding_codes,
             "method": self.method,
         }
+        if self.thresholds_by_view:  # absent when unused → older bundles hash identically
+            d["thresholds_by_view"] = {v: list(t) for v, t in self.thresholds_by_view.items()}
+        return d
 
     @classmethod
     def from_dict(cls, cal: dict[str, Any]) -> Calibration:
@@ -110,6 +145,9 @@ class Calibration:
             finding_codes=list(cal["finding_codes"]),
             biases=list(cal.get("biases") or []),
             method=str(cal.get("method", "temperature")),
+            thresholds_by_view={
+                str(v): list(t) for v, t in (cal.get("thresholds_by_view") or {}).items()
+            },
         )
 
 
@@ -128,6 +166,9 @@ class ModelBundle:
         path = Path(path)
         cfg = CxrConfig.load(path / "config.yaml")
         cfg.model.pretrained = False  # never download at inference time
+        raw = yaml.safe_load((path / "config.yaml").read_text(encoding="utf-8")) or {}
+        if "cam" not in (raw.get("model") or {}):
+            cfg.model.cam = "gradcam"  # bundle predates the switch: keep its heatmaps (D-029)
         net = CxrNet(cfg, len(cfg.finding_codes))
         state = torch.load(path / "weights.pt", map_location="cpu", weights_only=True)
         net.load_state_dict(state)
@@ -138,7 +179,11 @@ class ModelBundle:
         if (path / "ood.npz").exists():
             z = np.load(path / "ood.npz")
             ood = OodModel(
-                mean=z["mean"], precision=z["precision"], threshold=float(z["threshold"])
+                mean=z["mean"],
+                precision=z["precision"],
+                threshold=float(z["threshold"]),
+                # older bundles were fit on raw features; scoring must match the fit
+                normalize=bool(z["normalize"]) if "normalize" in z.files else False,
             )
         card = json.loads((path / "model_card.json").read_text())
         return cls(card["model_version_id"], cfg, net, calibration, ood, card, dev)
@@ -169,7 +214,13 @@ def save_bundle(
     )
     (tmp / "calibration.json").write_text(json.dumps(calibration.as_dict(), indent=2))
     if ood is not None:
-        np.savez(tmp / "ood.npz", mean=ood.mean, precision=ood.precision, threshold=ood.threshold)
+        np.savez(
+            tmp / "ood.npz",
+            mean=ood.mean,
+            precision=ood.precision,
+            threshold=ood.threshold,
+            normalize=np.asarray(ood.normalize),
+        )
     w_sha = sha256_file(tmp / "weights.pt")
     c_sha = cfg.canonical_hash()
     cal_sha = sha256_json(json.loads((tmp / "calibration.json").read_text()))
