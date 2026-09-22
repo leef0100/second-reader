@@ -56,7 +56,7 @@ When a model is trained on real data, `secondreader cxr eval` produces the repor
 
 - Three findings only. Absence of a flag is **not** a normal read.
 - Nodule/mass is a merged target (D-012); the model does not size or characterise lesions.
-- Localisation is Grad-CAM: coarse, sometimes off-target, and not a segmentation.
+- **The heat-map/box is a coarse region of model attention, not a localisation** (D-030). Measured against 415 NIH radiologist boxes for our three findings (`docs/reports/nih_baseline_v1_platt/localization_report.md`, model `cc2f56aa3325788c`): the heat-map peak lies inside the radiologist's box in 47 % [42–52] of true findings (random 5 %, centre prior 3 %); mean box IoU 0.20 (random 0.04); only 30 % of boxes reach IoU ≥ 0.3 and 9 % reach IoU ≥ 0.5; 19 % of heat-map mass falls inside the radiologist's box. Per finding, peak-in-box / IoU: pneumothorax 32 % / 0.17, pleural effusion 56 % / 0.25, nodule/mass 48 % / 0.18. Most of these images were in the model's training tier; the held-out subset (77 rows) is consistent but low-n. Grad-CAM is 10×10 at 320 px, so a small nodule cannot be tightly boxed by construction.
 - Calibration is fitted on internal validation; it is not guaranteed on a new site (monitor ECE via feedback and re-calibrate per site).
 - Prior comparison is side-by-side display only; the model does not compare with priors.
 - Training labels from NLP-mined reports are noisy; the label harmonisation across datasets is approximate.
@@ -74,6 +74,7 @@ When a model is trained on real data, `secondreader cxr eval` produces the repor
 | Apical pneumothorax on supine AP | Reduced sensitivity | View-stratified evaluation |
 | Subpulmonic effusion | Reduced sensitivity | — |
 | Nipple shadows, bone islands, vessels end-on | Nodule false positives | Clinician review |
+| Heat-map/box off the finding on a true positive | In ≈ 53 % of true findings the heat-map peak is outside the radiologist's box; ≈ 91 % of boxes have IoU < 0.5 (D-030). The box can also sit on a second plausible focus (e.g. the other costophrenic angle) that the reference reader did not mark. The flag may be right while the box is wrong — never treat the box as a negative read of the rest of the film | `cxr eval-localization` per model version; clinician review; feedback capture |
 | Burned-in text | Quarantined at ingestion (header + pixel heuristic); heuristic is not OCR and can miss | Manual quarantine review |
 | Model/threshold change | New `model_version_id`; every prediction records it | Audit |
 

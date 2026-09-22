@@ -369,3 +369,89 @@ def bench_model_cmd(
             )
         )
     )
+
+
+@app.command("eval-localization")
+def eval_localization_cmd(
+    model_id: str,
+    boxes: Path = typer.Option(
+        Path("data/raw/nih_cxr14/BBox_List_2017.csv"), help="NIH BBox_List_2017.csv"
+    ),
+    images: Path | None = typer.Option(None, help="image directory (default: <boxes dir>/images)"),
+    splits: Path | None = typer.Option(
+        None, help="split directory holding train/val/test.csv, to stratify by tier"
+    ),
+    registry: Path = Path("models"),
+    out: Path | None = typer.Option(None, help="default: runs/<model_id>/localization"),
+    n_boot: int = 1000,
+    n_examples: int = 3,
+    seed: int = 0,
+    device: str = "auto",
+    limit: int | None = typer.Option(None, help="only the first N boxed images (smoke runs)"),
+) -> None:
+    """Score heat-maps/boxes against radiologist boxes (pointing game, IoU, heat mass) with
+    random-box and centre-prior baselines. NIH boxes are evaluation only, never training."""
+    from secondreader.modalities.cxr.localization_eval import (
+        evaluate_localization,
+        load_nih_boxes,
+        load_nih_entry,
+        load_tiers,
+        summarize,
+        write_report,
+    )
+    from secondreader.modalities.cxr.model import ModelBundle
+
+    bundle = ModelBundle.load(registry / model_id, device=device)
+    df = load_nih_boxes(boxes)
+    images_dir = images if images is not None else boxes.parent / "images"
+    out_dir = out if out is not None else Path("runs") / model_id / "localization"
+    typer.echo(f"{len(df)} boxes on {df['image_id'].nunique()} images for our findings")
+    t0 = time.perf_counter()
+
+    def progress(i: int, n: int) -> None:
+        if i % 50 == 0 or i == n:
+            typer.echo(f"  {i}/{n} images ({(time.perf_counter() - t0):.0f}s)")
+
+    run = evaluate_localization(
+        bundle,
+        df,
+        images_dir,
+        entry=load_nih_entry(boxes.parent),
+        tiers=load_tiers(splits),
+        out_dir=out_dir,
+        n_examples=n_examples,
+        seed=seed,
+        limit=limit,
+        progress=progress,
+    )
+    summary = summarize(run.rows, n_boot=n_boot, seed=seed)
+
+    def short(p: Path) -> str:  # never write machine-specific absolute paths into a report
+        try:
+            return str(p.resolve().relative_to(Path.cwd().resolve()))
+        except ValueError:
+            return str(Path(*p.parts[-4:]))
+
+    md, js = write_report(
+        run,
+        summary,
+        out_dir,
+        extra={
+            "model_name": str(bundle.card.get("name", model_id)),
+            "boxes_path": short(boxes),
+            "splits": short(splits) if splits else "none",
+            "n_boot": n_boot,
+            "seed": seed,
+        },
+    )
+    for code, tbl in summary["overall"].items():
+        m, r, c = tbl["model"], tbl["random"], tbl["centre"]
+        typer.echo(
+            f"{code:18s} n={m['n']:4d}  pointing={100 * m['pointing_hit']['mean']:.0f}% "
+            f"(rand {100 * r['pointing_hit']['mean']:.0f}%, centre "
+            f"{100 * c['pointing_hit']['mean']:.0f}%)  IoU={m['iou']['mean']:.3f} "
+            f"(rand {r['iou']['mean']:.3f}, centre {c['iou']['mean']:.3f})  "
+            f"hit@0.3={100 * m['hit_iou_30']['mean']:.0f}%  "
+            f"mass={100 * m['mass_inside']['mean']:.0f}%"
+        )
+    typer.echo(f"report: {md}  json: {js}")
