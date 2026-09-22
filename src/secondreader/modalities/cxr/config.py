@@ -70,10 +70,7 @@ class TrainConfig(BaseModel):
     # "auto" = n_neg / n_pos per finding from the training manifest; a list = explicit weights;
     # null = unweighted (default).
     pos_weight: Literal["auto"] | list[float] | None = None
-    # Throughput knobs (see docs/reports/throughput_m1pro.md). Neither changes the maths.
-    channels_last: bool = False
-    autocast: bool = False  # fp16 autocast for the training forward pass on mps/cuda
-    prefetch_factor: int = 4
+    prefetch_factor: int = 4  # DataLoader batches prefetched per worker
 
 
 class CxrConfig(BaseModel):

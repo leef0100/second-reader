@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -83,33 +82,14 @@ def view_ce(logits: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     return nn.functional.cross_entropy(logits[m], v[m])
 
 
-def autocast_context(device: torch.device, enabled: bool) -> AbstractContextManager[Any]:
-    """fp16 autocast on mps/cuda when enabled; a no-op on cpu (bf16 there is not faster)."""
-    if not enabled or device.type == "cpu":
-        return nullcontext()
-    return torch.autocast(device_type=device.type, dtype=torch.float16)
-
-
-def to_device(x: torch.Tensor, device: torch.device, channels_last: bool) -> torch.Tensor:
-    x = x.to(device, non_blocking=True)
-    if channels_last and x.ndim == 4:
-        x = x.contiguous(memory_format=torch.channels_last)
-    return x
-
-
 @torch.no_grad()
 def run_inference(
-    net: CxrNet,
-    loader: DataLoader[dict[str, Any]],
-    device: torch.device,
-    *,
-    channels_last: bool = False,
+    net: CxrNet, loader: DataLoader[dict[str, Any]], device: torch.device
 ) -> dict[str, NDArray[Any]]:
     net.eval()
     logits, views, feats, ys, vs = [], [], [], [], []
     for batch in loader:
-        x = to_device(batch["x"], device, channels_last)
-        lo, vw, f = net(x)
+        lo, vw, f = net(batch["x"].to(device, non_blocking=True))
         logits.append(lo.float().cpu().numpy())
         views.append(torch.softmax(vw.float(), dim=1).cpu().numpy())
         feats.append(f.float().cpu().numpy())
@@ -204,7 +184,6 @@ def train(
     torch.manual_seed(cfg.train.seed)
     np.random.seed(cfg.train.seed)
     device = pick_device(cfg.train.device)
-    channels_last = cfg.train.channels_last
     if cfg.train.max_train_samples:
         train_df = train_df.sample(
             n=min(cfg.train.max_train_samples, len(train_df)), random_state=cfg.train.seed
@@ -222,8 +201,6 @@ def train(
         size=cfg.preprocess.image_size,
         pos_weight=pos_weight,
         cache=train_cache is not None,
-        channels_last=channels_last,
-        autocast=cfg.train.autocast,
     )
 
     ds_tr = ManifestDataset(train_df, cfg.preprocess, augment=cfg.train.augment, cache=train_cache)
@@ -238,8 +215,6 @@ def train(
     full_steps = len(ds_tr) // bs if drop_last else max(1, -(-len(ds_tr) // bs))
     steps_per_epoch = min(full_steps, cfg.train.max_steps_per_epoch or full_steps)
     net = CxrNet(cfg, len(cfg.finding_codes)).to(device)
-    if channels_last:
-        net = net.to(memory_format=torch.channels_last)
     opt = torch.optim.AdamW(net.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     sched = torch.optim.lr_scheduler.OneCycleLR(
         opt,
@@ -300,11 +275,10 @@ def train(
             for batch in dl_tr:
                 if step >= steps_per_epoch:
                     break
-                x = to_device(batch["x"], device, channels_last)
+                x = batch["x"].to(device, non_blocking=True)
                 y, v = batch["y"].to(device), batch["view"].to(device)
-                with autocast_context(device, cfg.train.autocast):
-                    lo, vw, _ = net(x)
-                loss = masked_bce(lo.float(), y, pw_t) + 0.3 * view_ce(vw.float(), v)
+                lo, vw, _ = net(x)
+                loss = masked_bce(lo, y, pw_t) + 0.3 * view_ce(vw, v)
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(net.parameters(), 5.0)
@@ -314,7 +288,7 @@ def train(
                 n += len(x)
                 step += 1
             train_seconds = time.time() - t0
-            val = run_inference(net, dl_va, device, channels_last=channels_last)
+            val = run_inference(net, dl_va, device)
         except KeyboardInterrupt:
             checkpoint(epoch, step)
             log.warning("interrupted", checkpoint=str(ckpt_path), epoch=epoch, step=step)
@@ -350,7 +324,7 @@ def train(
     net.to(device)
 
     # ---- calibration on validation (never on test/external) ----
-    val = run_inference(net, dl_va, device, channels_last=channels_last)
+    val = run_inference(net, dl_va, device)
     temps, thrs, val_summary = [], [], {}
     for j, code in enumerate(cfg.finding_codes):
         m = val["y"][:, j] >= 0
@@ -380,7 +354,7 @@ def train(
     # ---- OOD model on frontal training features; threshold from validation ----
     ood: OodModel | None = None
     if cfg.gate.ood_enabled:
-        tr = run_inference(net, dl_tr_eval, device, channels_last=channels_last)
+        tr = run_inference(net, dl_tr_eval, device)
         f_tr = tr["features"][tr["view"] == 0]
         f_va = val["features"][val["view"] == 0]
         if len(f_tr) >= 32 and len(f_va) >= 5:
@@ -405,7 +379,7 @@ def train(
         "history": history,
         "pos_weight": pos_weight,
     }
-    net = net.cpu().to(memory_format=torch.contiguous_format)
+    net = net.cpu()
     mid = save_bundle(
         pending,
         net=net,

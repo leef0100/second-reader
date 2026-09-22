@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pytest
 
@@ -42,6 +44,9 @@ def test_train_eval_pipeline(tmp_path):
     )
     assert (tmp_path / "models" / mid / "weights.pt").exists()
     assert set(metrics["val"]) == {"pneumothorax", "pleural_effusion", "nodule_mass"}
+    cal = json.loads((tmp_path / "models" / mid / "calibration.json").read_text())
+    assert set(cal) == {"temperatures", "thresholds", "operating_point", "finding_codes"}
+    assert (tmp_path / "models" / mid / "metrics.jsonl").exists()
     bundle = ModelBundle.load(tmp_path / "models" / mid, device="cpu")
     rep = evaluate(
         bundle,

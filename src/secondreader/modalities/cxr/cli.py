@@ -200,6 +200,9 @@ def manifest_cmd(
 def cache_cmd(
     splits: Path = Path("datasets/splits/v1"),
     out: Path = Path("data/cache/v1"),
+    config: Path | None = typer.Option(
+        None, help="experiment YAML; its `preprocess` section replaces --size/--window-*"
+    ),
     size: int = 320,
     window_low: float = 0.5,
     window_high: float = 99.5,
@@ -211,15 +214,22 @@ def cache_cmd(
     """Decode + window + letterbox every image of each split tier once into a uint8 memmap.
 
     The cache is keyed on (tier manifest sha256, preprocess config); `train --cache` refuses a
-    stale one. Use the same --size/--window-* as the experiment's `preprocess` section.
+    stale one. Pass --config so the preprocess section is taken from the experiment YAML, or
+    use the same --size/--window-* values as that section.
     """
     import os
 
     from secondreader.modalities.cxr.cache import FrameCache, StaleCacheError, build_cache
-    from secondreader.modalities.cxr.config import PreprocessConfig
+    from secondreader.modalities.cxr.config import CxrConfig, PreprocessConfig
     from secondreader.modalities.cxr.data import load_manifest, manifest_sha256
 
-    pre = PreprocessConfig(image_size=size, window_low_pct=window_low, window_high_pct=window_high)
+    if config is not None:
+        pre = CxrConfig.load(config).preprocess
+    else:
+        pre = PreprocessConfig(
+            image_size=size, window_low_pct=window_low, window_high_pct=window_high
+        )
+    typer.echo(f"preprocess: {pre.model_dump()}")
     if workers <= 0:
         workers = max(1, min(8, (os.cpu_count() or 2) - 2))
     for tier in [t for t in tiers.split(",") if t]:

@@ -105,6 +105,11 @@ def test_stale_or_mismatched_cache_is_refused(synth, tmp_path):
     fc = FrameCache.open(tmp_path / "t", pre=PRE, manifest_sha256=sha)
     with pytest.raises(ValueError, match="cache size"):
         ManifestDataset(df, PreprocessConfig(image_size=48), cache=fc)
+    meta = json.loads((tmp_path / "t" / "cache.json").read_text())
+    meta["format"] = 0
+    (tmp_path / "t" / "cache.json").write_text(json.dumps(meta))
+    with pytest.raises(StaleCacheError, match="format"):
+        FrameCache.open(tmp_path / "t", pre=PRE, manifest_sha256=sha)
 
 
 def test_limited_cache_falls_back_to_decoding(synth, tmp_path):
@@ -117,6 +122,62 @@ def test_limited_cache_falls_back_to_decoding(synth, tmp_path):
     plain = ManifestDataset(df, PRE)
     assert torch.equal(ds[10]["x"], plain[10]["x"])  # decoded, bit-identical
     assert torch.allclose(ds[2]["x"], plain[2]["x"], atol=QUANT_TOL)  # cached
+
+
+def test_cache_cli_builds_skips_rebuilds_and_reads_config(splits, tmp_path):
+    from typer.testing import CliRunner
+
+    from secondreader.modalities.cxr.cli import app
+
+    d, _, _, _ = splits
+    out = tmp_path / "cache"
+    base = ["cache", "--splits", str(d), "--out", str(out), "--workers", "1", "--size", "32"]
+    r = CliRunner()
+    res = r.invoke(app, [*base, "--tiers", "train,val,nope"])
+    assert res.exit_code == 0, res.output
+    assert "nope: no" in res.output and "train:" in res.output and "val:" in res.output
+    for t in ("train", "val"):
+        assert {p.name for p in (out / t).iterdir()} == {"images.npy", "index.csv", "cache.json"}
+    meta = json.loads((out / "train" / "cache.json").read_text())
+    assert meta["preprocess"] == PRE.model_dump() and meta["n"] == meta["n_manifest"]
+
+    res = r.invoke(app, [*base, "--tiers", "train"])  # unchanged → skipped
+    assert res.exit_code == 0 and "up to date" in res.output and "skipped" in res.output
+
+    res = r.invoke(app, [*base, "--tiers", "train", "--window-low", "1.0"])  # stale → rebuilt
+    assert res.exit_code == 0 and "stale cache, rebuilding" in res.output
+    meta = json.loads((out / "train" / "cache.json").read_text())
+    assert meta["preprocess"]["window_low_pct"] == 1.0
+
+    exp = tmp_path / "exp.yaml"
+    exp.write_text("preprocess: {image_size: 32, window_low_pct: 2.0}\n")
+    res = r.invoke(
+        app,
+        [
+            "cache",
+            "--splits",
+            str(d),
+            "--out",
+            str(out),
+            "--workers",
+            "1",
+            "--tiers",
+            "train",
+            "--config",
+            str(exp),
+            "--limit",
+            "3",
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    meta = json.loads((out / "train" / "cache.json").read_text())
+    assert meta["preprocess"]["window_low_pct"] == 2.0 and meta["n"] == 3 and meta["limit"] == 3
+    fc = FrameCache.open(
+        out / "train",
+        pre=PreprocessConfig(image_size=32, window_low_pct=2.0),
+        manifest_sha256=manifest_sha256(d / "train.csv"),
+    )
+    assert len(fc) == 3
 
 
 # ---- class imbalance -------------------------------------------------------------------------
@@ -221,6 +282,38 @@ def test_interrupt_checkpoint_resume_and_metrics_jsonl(splits, tmp_path, monkeyp
     assert not (reg / "pending" / "checkpoint.pt").exists()
     assert len((bundle / "metrics.jsonl").read_text().splitlines()) == 3
     assert set(json.loads((bundle / "calibration.json").read_text())) == CALIBRATION_KEYS
+
+
+def test_resume_after_post_training_failure_reruns_no_training_step(splits, tmp_path, monkeypatch):
+    """The end-of-epoch checkpoint outlives a crash in calibration/bundling: --resume then
+    skips straight to the post-training stages instead of retraining."""
+    _, tr, va, sha = splits
+    reg = tmp_path / "models"
+    kw = dict(registry_root=reg, split_manifest_sha256=sha, datasets_info=[])
+
+    def disk_full(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(train_mod, "save_bundle", disk_full)
+    with pytest.raises(RuntimeError, match="disk full"):
+        train(_cfg(epochs=2), tr, va, **kw)
+    ck = torch.load(reg / "pending" / "checkpoint.pt", weights_only=True)
+    assert ck["epoch"] == 2 and ck["step_in_epoch"] == 0 and len(ck["history"]) == 2
+    assert ck["best_state"] is not None
+
+    monkeypatch.undo()
+    real_bce, calls = train_mod.masked_bce, {"n": 0}
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real_bce(*a, **k)
+
+    monkeypatch.setattr(train_mod, "masked_bce", counting)
+    mid, metrics = train(_cfg(epochs=2), tr, va, resume=True, **kw)
+    assert calls["n"] == 0
+    assert [h["epoch"] for h in metrics["history"]] == [0, 1]
+    assert (reg / mid / "weights.pt").exists() and not (reg / "pending" / "checkpoint.pt").exists()
+    assert len((reg / mid / "metrics.jsonl").read_text().splitlines()) == 2
 
 
 def test_train_with_cache_pos_weight_and_max_steps(splits, tmp_path):

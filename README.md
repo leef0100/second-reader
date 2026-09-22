@@ -106,7 +106,9 @@ Nothing in this repository downloads or contains patient data. To train on publi
 1. Read `datasets/registry.yaml` — every dataset's licence and `commercial_ok` flag. Most radiologist-labelled sets are **research-only**. Re-verify the licence text at download time.
 2. Build manifests: `uv run secondreader cxr manifest nih /path/to/nih --out datasets/manifests/nih.csv` (also `chexpert`, `vindr`, `padchest`).
 3. Split (patient-level, hashed; external sets locked): `uv run secondreader cxr split datasets/manifests/*.csv --version v1 --external vindr_cxr,padchest`. Record the printed manifest hash in `DECISIONS.md`.
-4. Train with `configs/experiments/cxr_baseline.yaml` and evaluate on `--tier external`. The report (`runs/<model>/external/report.md`) has overall and per-subgroup metrics with CIs and reliability diagrams; it refuses to render without subgroup tables.
+4. Build the preprocessing cache once per split version (decodes every image once, ~30 min for 112k NIH PNGs on an M1 Pro; the cache is refused if the manifest or preprocess config changes): `uv run secondreader cxr cache --splits datasets/splits/v1 --size 320 --out data/cache/v1`. Add `--limit 500` for a smoke cache.
+5. Train with `configs/experiments/cxr_baseline.yaml --cache data/cache/v1` and evaluate on `--tier external`. A checkpoint is written every epoch and on Ctrl-C; rerun the same command with `--resume` to continue. Per-epoch metrics land in `models/<id>/metrics.jsonl`. The report (`runs/<model>/external/report.md`) has overall and per-subgroup metrics with CIs and reliability diagrams; it refuses to render without subgroup tables.
+6. Throughput on this machine (loader and DenseNet forward/backward, with the exact commands) is in `docs/reports/throughput_m1pro.md`; `uv run secondreader cxr bench loader|model` reproduces it.
 
 ## Adding a modality (e.g. ultrasound)
 
