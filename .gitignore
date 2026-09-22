@@ -17,6 +17,7 @@ datasets/splits/**/*.csv
 *.jpg
 *.jpeg
 !docs/**/*.png
+!services/site/assets/*.png
 runs/
 artifacts/
 models/

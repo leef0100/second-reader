@@ -462,6 +462,9 @@ def recalibrate(
     from secondreader.modalities.cxr.model import ModelBundle
 
     b = ModelBundle.load(bundle_dir, device=device)
+    # ModelBundle.load sets model.pretrained=False to avoid downloads; the bundle we write must
+    # keep the ORIGINAL training config (init provenance is part of the model card, D-007).
+    cfg = CxrConfig.load(Path(bundle_dir) / "config.yaml")
     fc = None
     if cache_dir is not None and (Path(cache_dir) / "cache.json").exists():
         fc = FrameCache.open(Path(cache_dir), pre=b.config.preprocess, manifest_sha256=None)
@@ -479,7 +482,7 @@ def recalibrate(
     mid = save_bundle(
         Path(registry_root) / "pending",
         net=b.net.cpu(),
-        cfg=b.config,
+        cfg=cfg,
         calibration=calibration,
         ood=b.ood,
         split_manifest_sha256=card.get("split_manifest_sha256"),
