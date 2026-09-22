@@ -1,0 +1,45 @@
+# Deploys the public informational site (services/site) to GitHub Pages.
+# One-time setup by a repo admin: Settings → Pages → Source = "GitHub Actions".
+# See README.md, section "Public site".
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard rails (research-use banner present, no upload forms)
+        run: |
+          grep -q "For research use only. Not for diagnostic use." services/site/index.html
+          if grep -Eiq '<form|type="file"' services/site/index.html; then
+            echo "services/site must not contain forms or file inputs" && exit 1
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: services/site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
