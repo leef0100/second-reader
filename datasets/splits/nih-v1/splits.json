@@ -1,0 +1,37 @@
+{
+  "version": "nih-v1",
+  "salt": "second-reader-nih-v1",
+  "manifest_sha256": "96cda52f19d5b0a8a52198d5bb2045e0dabc124151ddc15be30e9607abb7ff50",
+  "tiers": {
+    "train": {
+      "n": 90036,
+      "sha256": "d26ed702a6d790ad0eebd96382ea1a4418ae72317528fdc678c7c43fe8c59d5d",
+      "path": "datasets/splits/nih-v1/train.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    },
+    "val": {
+      "n": 10637,
+      "sha256": "f6267dcb0fd081c2d39a5a0a5b14fb6d9aa3a39c023daf3b7c6715563ec54c74",
+      "path": "datasets/splits/nih-v1/val.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    },
+    "test": {
+      "n": 11447,
+      "sha256": "7e0ef5ea05ed132673a779cb63b9820c36e1812be7377ff66cbd5fbf4220b186",
+      "path": "datasets/splits/nih-v1/test.csv",
+      "datasets": [
+        "nih_cxr14"
+      ]
+    },
+    "external": {
+      "n": 0,
+      "sha256": "7259b68d58f26ed2d936d2cf516d149182dcb32fb34c911c3d000aef8d978902",
+      "path": "datasets/splits/nih-v1/external.csv",
+      "datasets": []
+    }
+  }
+}
