@@ -34,6 +34,7 @@ class PreprocessConfig(BaseModel):
 
 class GateConfig(BaseModel):
     allowed_modalities: list[str] = ["CR", "DX"]
+    min_patient_age_years: int = 18  # adult-only intended use; header guard (D-034)
     allowed_body_parts: list[str] = ["CHEST", "THORAX", "LUNG", "PECTUS", "TORAX", ""]
     frontal_views: list[str] = ["PA", "AP", ""]
     min_short_side: int = 256

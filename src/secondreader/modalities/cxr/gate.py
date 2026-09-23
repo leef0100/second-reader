@@ -89,6 +89,11 @@ def header_checks(inp: ImagingInput, cfg: GateConfig) -> list[str]:
         reasons.append(f"view position '{view}' is not frontal (PA/AP)")
     if inp.n_frames != 1:
         reasons.append(f"expected a single frame, got {inp.n_frames}")
+    if inp.patient_age_years is not None and inp.patient_age_years < cfg.min_patient_age_years:
+        reasons.append(
+            f"patient age {inp.patient_age_years} y is below the adult-only scope "
+            f"({cfg.min_patient_age_years} y)"
+        )
     return reasons
 
 

@@ -183,3 +183,13 @@ def test_age_band(age, band):
     from secondreader.core.eval import age_band
 
     assert age_band(age) == band
+
+
+def test_header_gate_rejects_paediatric_by_age_header():
+    cfg = GateConfig()
+    child = to_imaging_input(make_dataset(cxr_spec(patient_age="009Y")))
+    assert any("adult-only" in r for r in header_checks(child, cfg))
+    adult = to_imaging_input(make_dataset(cxr_spec(patient_age="018Y")))
+    assert not any("adult-only" in r for r in header_checks(adult, cfg))
+    unknown = to_imaging_input(make_dataset(cxr_spec(patient_age=None)))
+    assert not any("adult-only" in r for r in header_checks(unknown, cfg))
