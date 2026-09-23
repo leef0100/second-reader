@@ -23,7 +23,7 @@ The software **does not** make diagnoses, triage, prioritise, or alter the stand
 | View | Frontal PA or AP (`ViewPosition` and learned view head) |
 | Body part | Chest/thorax |
 | Frames | Single frame |
-| Patients | Adults (≥ 18 y). Paediatric images are out of scope and should be gated out by the OOD detector — this is **not** yet validated. |
+| Patients | Adults (≥ 18 y). Paediatric images are out of scope. Measured (docs/reports/gate_ood_eval): the learned OOD score rejects only ~25% of paediatric films, so the DICOM age header is the primary guard and an explicit paediatric classifier is planned. |
 | Pixel data | Any bit depth; MONOCHROME1/2; rescale slope/intercept honoured |
 | Identity | Inputs are de-identified before storage; the pseudonymised patient key links priors |
 
